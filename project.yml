@@ -1,0 +1,61 @@
+# PeakPal iOS - XcodeGen 工程定义
+# 用法（需 macOS + Xcode）：安装 xcodegen 后在本目录执行 `xcodegen generate` 生成 PeakPal.xcodeproj
+name: PeakPal
+options:
+  bundleIdPrefix: cn.peakpal
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+packages:
+  MapLibre:
+    url: https://github.com/maplibre/maplibre-gl-native-distribution
+    from: 6.5.0
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SCRIPTING: NO
+
+targets:
+  PeakPal:
+    type: application
+    platform: iOS
+    sources:
+      - PeakPal
+    dependencies:
+      - package: MapLibre
+        product: MapLibre
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cn.peakpal.app
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: 1
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    info:
+      path: PeakPal/Info.plist
+      properties:
+        CFBundleDisplayName: 爱徒步
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # —— 与安卓端一致的运行时权限说明 ——
+        NSLocationWhenInUseUsageDescription: 用于在地图上显示你的位置、记录徒步轨迹并计算里程。
+        NSLocationAlwaysAndWhenInUseUsageDescription: 在后台持续记录徒步轨迹，并向队友实时共享你的位置。
+        NSMicrophoneUsageDescription: 队伍实时对讲需要使用麦克风。
+        NSCameraUsageDescription: 用于拍摄徒步照片并分享到社区。
+        NSPhotoLibraryUsageDescription: 用于选择照片发布帖子。
+        UIBackgroundModes:
+          - location
+          - audio
+        # 苹果审核要求的后台定位说明
+        NSLocationAlwaysAndWhenInUseUsageDelegateHint: 持续记录徒步轨迹需要后台定位。
+        ITSAppUsesNonExemptEncryption: false
+        # 允许连接 http 自建服务器（与安卓端一致：支持用户自建 http 后端）
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true

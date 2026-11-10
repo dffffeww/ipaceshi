@@ -1,0 +1,91 @@
+name: iOS 测试包构建
+
+# 用 GitHub 免费的 macOS 云端机器构建 PeakPal iOS 测试包：
+# 1) PeakPal-unsigned.ipa —— 真机测试包（未签名，用爱思助手/Sideloadly/AltStore + 自己的 Apple ID 签名后安装，免费账号 7 天有效）
+# 2) PeakPal-simulator.app.zip —— 模拟器包（有 Mac 的话拖进模拟器即可运行）
+# 3) 构建日志 —— 编译失败时排查用
+
+on:
+  push:
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen || brew upgrade xcodegen
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate
+
+      - name: 解析 Swift 包依赖
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project PeakPal.xcodeproj \
+            -scheme PeakPal \
+            -destination 'generic/platform=iOS Simulator'
+
+      - name: 编译真机 Release 包（不签名）
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project PeakPal.xcodeproj \
+            -scheme PeakPal \
+            -destination 'generic/platform=iOS' \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | tee build.log
+
+      - name: 打包未签名 ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/PeakPal.app Payload/
+          zip -qry PeakPal-unsigned.ipa Payload
+          ls -lh PeakPal-unsigned.ipa
+
+      - name: 编译模拟器包
+        run: |
+          xcodebuild build \
+            -project PeakPal.xcodeproj \
+            -scheme PeakPal \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            > build-sim.log 2>&1
+          cd build/Build/Products/Debug-iphonesimulator
+          zip -qry "$GITHUB_WORKSPACE/PeakPal-simulator.app.zip" PeakPal.app
+
+      - name: 上传真机测试包（未签名 ipa）
+        uses: actions/upload-artifact@v4
+        with:
+          name: PeakPal-iOS-未签名ipa
+          path: PeakPal-unsigned.ipa
+          retention-days: 30
+
+      - name: 上传模拟器包
+        uses: actions/upload-artifact@v4
+        with:
+          name: PeakPal-iOS-模拟器包
+          path: PeakPal-simulator.app.zip
+          retention-days: 30
+
+      - name: 归档构建日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: |
+            build.log
+            build-sim.log
+          retention-days: 7
+          if-no-files-found: ignore

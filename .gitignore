@@ -1,0 +1,15 @@
+# 构建产物
+build.log
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# XcodeGen 生成（每次云端重新生成，不入库）
+PeakPal.xcodeproj/
+
+# macOS
+.DS_Store
+
+# SPM 缓存
+.build/
+.swiftpm/
