@@ -214,7 +214,7 @@ public final class TalkPlayer: ObservableObject {
         buf.frameLength = AVAudioFrameCount(samples)
         pcm.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             if let dst = buf.int16ChannelData {
-                dst.update(from: raw.baseAddress!.assumingMemoryBound(to: Int16.self), count: samples)
+                dst.pointee.update(from: raw.baseAddress!.assumingMemoryBound(to: Int16.self), count: samples)
             }
         }
         scheduledCount += 1
@@ -303,13 +303,13 @@ public final class TalkPlayer: ObservableObject {
                         let ctxPtr = inUserData!.assumingMemoryBound(to: DecCtx.self)
                         var filled: UInt32 = 0
                         var byteOff: UInt32 = 0
-                        let bufCapacity = Int(ioData.mBuffers.mDataByteSize)
+                        let bufCapacity = Int(ioData.pointee.mBuffers.mDataByteSize)
                         while filled < ioPackets.pointee && ctxPtr.pointee.idx < ctxPtr.pointee.frames.count {
                             let f = ctxPtr.pointee.frames[ctxPtr.pointee.idx]
                             let n = f.count
                             guard byteOff + n <= bufCapacity else { break }
                             f.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-                                memcpy(ioData.mBuffers.mData! + Int(byteOff), raw.baseAddress!, n)
+                                memcpy(ioData.pointee.mBuffers.mData! + Int(byteOff), raw.baseAddress!, n)
                             }
                             outDescPtr?[Int(filled)] = AudioStreamPacketDescription(
                                 mStartOffset: byteOff, mVariableFramesInPacket: 0, mDataByteSize: UInt32(n))
@@ -317,14 +317,14 @@ public final class TalkPlayer: ObservableObject {
                             filled += 1
                             ctxPtr.pointee.idx += 1
                         }
-                        ioData.mNumberBuffers = 1
-                        ioData.mBuffers.mDataByteSize = byteOff
+                        ioData.pointee.mNumberBuffers = 1
+                        ioData.pointee.mBuffers.mDataByteSize = byteOff
                         ioPackets.pointee = filled
                         return filled == 0 ? -1 /* 数据耗尽 */ : noErr
                     },
                     ctxPtr,
                     &packets,
-                    obuf.baseMemory,
+                    obuf.baseAddress!.assumingMemoryBound(to: AudioBufferList.self),
                     &outDesc)
             }
         }

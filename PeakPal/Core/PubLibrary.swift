@@ -14,7 +14,7 @@ public enum PubLibrary {
         public var id: String { src + "/" + name }
         /// 展示名：loc + " - " + 清洗后的路线名（与安卓 pubLabel+label 同款）
         public var label: String {
-            let clean = Self.pubLabel(fname: name, loc: loc, src: src)
+            let clean = PubLibrary.pubLabel(fname: name, loc: loc, src: src)
             return loc.isEmpty ? clean : loc + " - " + clean
         }
     }

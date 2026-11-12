@@ -119,7 +119,7 @@ final class Map3DViewModel: NSObject, ObservableObject {
         let pts = Db.shared.loadPts(tid: latest.id)
         guard pts.count >= 2 else { return }
         let coords = pts.map { p in CLLocationCoordinate2D(latitude: p.lat, longitude: p.lng) }
-        let line = MLNPolyline(coordinates: coords, count: coords.count)
+        let line = MLNPolyline(coordinates: coords, count: UInt(coords.count))
         map.addAnnotation(line)
         let pad = UIEdgeInsets(top: 80, left: 40, bottom: 80, right: 40)
         map.setVisibleCoordinates(coords, count: UInt(coords.count), edgePadding: pad, animated: true)
@@ -127,7 +127,7 @@ final class Map3DViewModel: NSObject, ObservableObject {
 
     func clearTrack() {
         guard let map = mapView else { return }
-        for a in map.annotations where a is MLNPolyline { map.removeAnnotation(a) }
+        for a in (map.annotations ?? []) where a is MLNPolyline { map.removeAnnotation(a) }
     }
 
     // MARK: - 队友实时位置图层（1:1 移植安卓 TeamOverlay 视觉：绿点+名字胶囊，自己不画）
@@ -135,7 +135,7 @@ final class Map3DViewModel: NSObject, ObservableObject {
     func updateTeamLayer() {
         guard let map = mapView else { return }
         // 清旧的队友标记（保留轨迹线）
-        for a in map.annotations where a is TeamMemberAnnotation {
+        for a in (map.annotations ?? []) where a is TeamMemberAnnotation {
             map.removeAnnotation(a)
         }
         guard teamOn, TeamState.shared.inTeam else { return }
@@ -179,7 +179,7 @@ struct Map3DContainer: UIViewRepresentable {
         map.styleURL = Map3DStyle.styleURL()
         map.showsUserLocation = true
         map.showsUserHeadingIndicator = true
-        map.pitchEnabled = true
+        map.isPitchEnabled = true
         map.compassView.isHidden = false
         map.delegate = context.coordinator
         // 默认视角：带俯仰的 3D 观感

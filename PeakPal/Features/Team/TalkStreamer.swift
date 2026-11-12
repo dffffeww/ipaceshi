@@ -30,7 +30,7 @@ public final class TalkStreamer: ObservableObject {
     private let lock = NSLock()
     private var aacFrameBuf = Data()                   // 当前片累计的 ADTS 帧
     private var frameCount = 0                         // 当前片帧数
-    private var uploadChain: [Data] = []               // 待上传片（串行有序）
+    private var uploadChain: [[String: Any]] = []      // 待上传片（串行有序）
     private var uploading = false
     private var talkingFlag = false
     private var stopReq = false
@@ -149,7 +149,7 @@ public final class TalkStreamer: ObservableObject {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
         if nowMs - lastAmpAt >= 100 {
             lastAmpAt = nowMs
-            let v = Self.rms(of: ch, count: samples)
+            let v = Self.rms(of: ch.pointee, count: samples)
             DispatchQueue.main.async { [weak self] in self?.amp = min(32767, Int(v * 2.2)) }
         }
 
@@ -183,7 +183,7 @@ public final class TalkStreamer: ObservableObject {
         let idx = segIdx
         segIdx += 1
         let stat = end && stopReq ? "e" : (idx == 0 ? "s" : "m")
-        uploadChain.append(Self.packetBody(idx: idx, stat: stat, data: seg))
+        uploadChain.append(packetBody(idx: idx, stat: stat, data: seg))
     }
 
     // MARK: - 串行上传（单队列保证顺序，弱网每片重试一次）
@@ -305,7 +305,7 @@ public final class TalkStreamer: ObservableObject {
         var conv: AudioConverterRef?
         guard AudioConverterNew(&pcmASBD, &aacASBD, &conv) == noErr, let c = conv else { return nil }
         var bitrate: UInt32 = 24000 // 24kbps：与安卓一致，弱网上传快、清晰度不变
-        AudioConverterSetProperty(c, kAudioConverterCodecBitRate, 4, &bitrate)
+        AudioConverterSetProperty(c, kAudioConverterEncodeBitRate, 4, &bitrate)
         return c
     }
 
@@ -324,19 +324,19 @@ public final class TalkStreamer: ObservableObject {
                         let ctxPtr = inUserData!.assumingMemoryBound(to: EncCtx.self)
                         let avail = ctxPtr.pointee.data.count - ctxPtr.pointee.offset
                         if avail < 2 { return noErr } // 数据耗尽
-                        let want = min(Int(ioNumberDataPackets.pointee) * 2, avail, Int(ioData.mBuffers.mDataByteSize))
+                        let want = min(Int(ioNumberDataPackets.pointee) * 2, avail, Int(ioData.pointee.mBuffers.mDataByteSize))
                         ctxPtr.pointee.data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-                            memcpy(ioData.mBuffers.mData!, raw.baseAddress! + ctxPtr.pointee.offset, want)
+                            memcpy(ioData.pointee.mBuffers.mData!, raw.baseAddress! + ctxPtr.pointee.offset, want)
                         }
-                        ioData.mBuffers.mDataByteSize = UInt32(want)
-                        ioData.mNumberBuffers = 1
+                        ioData.pointee.mBuffers.mDataByteSize = UInt32(want)
+                        ioData.pointee.mNumberBuffers = 1
                         ioNumberDataPackets.pointee = UInt32(want / 2)
                         ctxPtr.pointee.offset += want
                         return noErr
                     },
                     ctxPtr,
                     &packets,
-                    obuf.baseMemory,
+                    obuf.baseAddress!.assumingMemoryBound(to: AudioBufferList.self),
                     &outDesc)
             }
         }

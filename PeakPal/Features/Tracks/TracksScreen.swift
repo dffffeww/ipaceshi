@@ -357,7 +357,7 @@ struct DetailMapContainer: UIViewRepresentable {
                 drawn = true
                 // 影像底图 WGS84，轨迹点 WGS84：直投（GCJ 纠偏反而偏移几百米）
                 let coords = pts.map { p in CLLocationCoordinate2D(latitude: p.lat, longitude: p.lng) }
-                let line = MLNPolyline(coordinates: coords, count: coords.count)
+                let line = MLNPolyline(coordinates: coords, count: UInt(coords.count))
                 map.addAnnotation(line)
                 map.addAnnotation(IconAnnotation(image: PoiBadge.glowLabel("起"), coordinate: coords[0]))
                 map.addAnnotation(IconAnnotation(image: PoiBadge.glowLabel("终"), coordinate: coords[coords.count - 1]))
@@ -378,7 +378,7 @@ struct DetailMapContainer: UIViewRepresentable {
             // 标注点（数量变化即刷新）
             if poisRendered != pois.count {
                 poisRendered = pois.count
-                for a in map.annotations where a is PoiAnnotation { map.removeAnnotation(a) }
+                for a in (map.annotations ?? []) where a is PoiAnnotation { map.removeAnnotation(a) }
                 for (idx, poi) in pois.enumerated() where poi.isValid {
                     map.addAnnotation(PoiAnnotation(poi: poi, num: idx + 1))
                 }
@@ -390,8 +390,15 @@ struct DetailMapContainer: UIViewRepresentable {
                 let v = (mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MLNAnnotationView)
                     ?? MLNAnnotationView(annotation: annotation, reuseIdentifier: id)
                 v.annotation = annotation
-                v.image = image
-                v.canShowCallout = callout
+                // MapLibre 的 MLNAnnotationView 是纯 UIView：用 UIImageView 承载位图
+                v.subviews.forEach { $0.removeFromSuperview() }
+                if let img = image {
+                    let iv = UIImageView(image: img)
+                    iv.frame = CGRect(origin: .zero, size: img.size)
+                    v.bounds = iv.frame
+                    v.addSubview(iv)
+                }
+                v.isEnabled = true   // MapLibre 无 canShowCallout；气泡由选中态控制
                 return v
             }
             if let poi = annotation as? PoiAnnotation {

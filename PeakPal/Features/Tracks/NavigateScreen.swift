@@ -522,7 +522,7 @@ struct NavMapContainer: UIViewRepresentable {
         if !routeDrawn && engine.track.count >= 2 {
             routeDrawn = true
             let coords = engine.track.map { p in CLLocationCoordinate2D(latitude: p.lat, longitude: p.lng) }
-            let line = MLNPolyline(coordinates: coords, count: coords.count)
+            let line = MLNPolyline(coordinates: coords, count: UInt(coords.count))
             map.addAnnotation(line)
             // 起终点发光徽章 + 里程碑徽章（与安卓轨迹详情页/导航页同款）
             addEndsAndKm(map, engine: engine)
@@ -534,17 +534,17 @@ struct NavMapContainer: UIViewRepresentable {
         // 已走段红色虚点线（每轮重画，等价安卓 LiveOverlay.setWalkedPoints）
         if engine.walked.count != walkedCount {
             walkedCount = engine.walked.count
-            for a in map.annotations where a is WalkedPolyline { map.removeAnnotation(a) }
+            for a in (map.annotations ?? []) where a is WalkedPolyline { map.removeAnnotation(a) }
             if engine.walked.count >= 2 {
                 let coords = engine.walked.map { p in CLLocationCoordinate2D(latitude: p.lat, longitude: p.lng) }
-                map.addAnnotation(WalkedPolyline(coordinates: coords, count: coords.count))
+                map.addAnnotation(WalkedPolyline(coordinates: coords, count: UInt(coords.count)))
             }
         }
         // 标注点（后台查库晚于首帧：数量变化即刷新，等价安卓 addNavPois）
         let poiCount = pois?.count ?? -1
         if poisRendered != poiCount {
             poisRendered = poiCount
-            for a in map.annotations where a is PoiAnnotation { map.removeAnnotation(a) }
+            for a in (map.annotations ?? []) where a is PoiAnnotation { map.removeAnnotation(a) }
             if let pois {
                 for (idx, poi) in pois.enumerated() where poi.isValid {
                     map.addAnnotation(PoiAnnotation(poi: poi, num: idx + 1))
@@ -580,22 +580,16 @@ struct NavMapContainer: UIViewRepresentable {
         }
     }
 
-        public func mapView(_ mapView: MLNMapView, rendererFor annotation: MLNAnnotation) -> MLNOverlayRenderer {
-            if let walked = annotation as? WalkedPolyline {
-                let r = MLNPolylineRenderer(polyline: walked)
-                r.strokeColor = UIColor(red: 1, green: 0.23, blue: 0.19, alpha: 1)   // 0xFFFF3B30
-                r.lineWidth = 7
-                // 红色虚线：已走段（等价安卓虚点串）—— MapLibre 无 lineDashType，用 dashPattern
-                r.lineDashPattern = [0, 16]
-                return r
+        // MapLibre 无 renderer API：形状样式走这两个回调（v7.114 对齐官方 delegate 签名）
+        public func mapView(_ mapView: MLNMapView, strokeColorForShapeAnnotation annotation: MLNShape) -> UIColor {
+            if annotation is WalkedPolyline {
+                return UIColor(red: 1, green: 0.23, blue: 0.19, alpha: 1)   // 0xFFFF3B30 已走段红
             }
-            if let line = annotation as? MLNPolyline {
-                let r = MLNPolylineRenderer(polyline: line)
-                r.strokeColor = UIColor(red: 0.11, green: 0.48, blue: 0.26, alpha: 1) // 循迹线深绿
-                r.lineWidth = 5
-                return r
-            }
-            return MLNOverlayRenderer()
+            return UIColor(red: 0.11, green: 0.48, blue: 0.26, alpha: 1)    // 循迹线深绿
+        }
+
+        public func mapView(_ mapView: MLNMapView, lineWidthForPolylineAnnotation annotation: MLNPolyline) -> CGFloat {
+            return annotation is WalkedPolyline ? 7 : 5
         }
 
         // 标注点/里程碑/起终点徽章（位图图标，与安卓 glowDot/glowLabel/黑色公里徽章同款）
@@ -604,8 +598,14 @@ struct NavMapContainer: UIViewRepresentable {
                 let v = (mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MLNAnnotationView)
                     ?? MLNAnnotationView(annotation: annotation, reuseIdentifier: id)
                 v.annotation = annotation
-                v.image = image
-                v.canShowCallout = false
+                // MapLibre 的 MLNAnnotationView 是纯 UIView（无 image 属性）：用 UIImageView 承载位图徽章
+                v.subviews.forEach { $0.removeFromSuperview() }
+                if let img = image {
+                    let iv = UIImageView(image: img)
+                    iv.frame = CGRect(origin: .zero, size: img.size)
+                    v.bounds = iv.frame
+                    v.addSubview(iv)
+                }
                 return v
             }
             if let poi = annotation as? PoiAnnotation {
@@ -645,6 +645,8 @@ final class PoiAnnotation: MLNPointAnnotation {
         title = "\(num) · \(poi.name.isEmpty ? "标注点" : poi.name)"
         subtitle = "\(Poi.typeName(poi.type)) · 海拔 \(String(format: "%.0f m", poi.alt))"
     }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
 /// 里程碑注解（每满 1km 黑色数字徽章）
@@ -655,6 +657,8 @@ final class KmAnnotation: MLNPointAnnotation {
         super.init()
         self.coordinate = coordinate
     }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
 /// 固定图标注解（起终点发光徽章）
@@ -665,6 +669,8 @@ final class IconAnnotation: MLNPointAnnotation {
         super.init()
         self.coordinate = coordinate
     }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 }
 
 /// 徽章位图（1:1 移植安卓 TrackDetailActivity.glowDot/glowLabel + TrackOverlay.drawKmBadge）
@@ -720,6 +726,7 @@ enum PoiBadge {
         let s = dp * scale
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: s, height: s))
         return renderer.image { ctx in
+            var ctx = ctx
             draw(&ctx, s / 2, s / 2, s)
         }
     }
