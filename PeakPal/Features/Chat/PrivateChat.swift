@@ -457,28 +457,64 @@ struct NotifyScreen: View {
 /// 时间格式化已由 CommunityClient.TimeFmt 提供（post(ms) 兼容毫秒时间戳）
 
 /// 消息 Tab 根页：私信会话 + 系统通知（对应安卓 ConversationsFragment + NotifyActivity）
+/// 消息中心（对应安卓 ConversationsFragment「消息中心」四宫格升级为三段式）：
+/// - 私信：GET /api/conversations（拉取即红点，进会话即已读）
+/// - 队伍聊天：TeamChatScreen（未在队伍时引导去队伍页）
+/// - 通知：GET /api/notifies + POST 已读
+/// 与安卓端同一套服务器数据，实时互通
 struct MessagesRootScreen: View {
     @EnvironmentObject var session: Session
+    @EnvironmentObject var team: TeamState
+    @State private var seg = 0
 
     var body: some View {
+        VStack(spacing: 0) {
+            Picker("消息", selection: $seg) {
+                Text("私信").tag(0)
+                Text("队伍聊天").tag(1)
+                Text("通知").tag(2)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+
+            if seg == 0 {
+                ConversationsScreen()
+            } else if seg == 1 {
+                if team.inTeam {
+                    TeamChatScreen()
+                } else {
+                    teamEmpty
+                }
+            } else {
+                NotifyScreen()
+            }
+        }
+        .navigationTitle("消息")
+    }
+
+    private var teamEmpty: some View {
         NavigationStack {
-            List {
-                Section {
-                    NavigationLink {
-                        ConversationsScreen()
-                    } label: {
-                        Label("私信会话", systemImage: "bubble.left.and.bubble.right.fill")
-                    }
-                    NavigationLink {
-                        NotifyScreen()
-                    } label: {
-                        Label("系统通知", systemImage: "bell.fill")
-                    }
-                } footer: {
-                    Text("私信、系统通知与安卓端同一套服务器数据，实时互通")
+            VStack(spacing: 12) {
+                Image(systemName: "person.3")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.secondary)
+                Text("还没有加入队伍")
+                    .font(.subheadline.weight(.medium))
+                Text("创建或加入队伍后，即可在这里和队友实时聊天、对讲")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                NavigationLink {
+                    TeamScreen()
+                } label: {
+                    Text("去队伍页").font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 20).padding(.vertical, 9)
+                        .background(Color(red: 0.28, green: 0.62, blue: 0.36), in: Capsule())
+                        .foregroundStyle(.white)
                 }
             }
-            .navigationTitle("消息")
+            .padding(24)
         }
     }
 }
