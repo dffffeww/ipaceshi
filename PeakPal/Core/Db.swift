@@ -76,11 +76,12 @@ public final class Db {
         t.asc = TrackMath.totalAscent(pts)
         t.maxalt = pts.map(\.alt).max() ?? 0
         if t.dur == 0 { t.dur = max(0, t.end - t.start) }
+        var t2 = t   // escaping 闭包不能捕获 inout 参数，复制一份
         let sem = DispatchSemaphore(value: 0)
         var newId: Int64 = 0
         queue.async {
             self.exec("BEGIN;")
-            self.exec("INSERT INTO tracks(name,start,end,dur,distance,asc,maxalt,cloud_id,done) VALUES('\(Self.esc(t.name))',\(t.start),\(t.end),\(t.dur),\(t.distance),\(t.asc),\(t.maxalt),\(t.cloudId),\(t.done ? 1 : 0));")
+            self.exec("INSERT INTO tracks(name,start,end,dur,distance,asc,maxalt,cloud_id,done) VALUES('\(Self.esc(t2.name))',\(t2.start),\(t2.end),\(t2.dur),\(t2.distance),\(t2.asc),\(t2.maxalt),\(t2.cloudId),\(t2.done ? 1 : 0));")
             newId = sqlite3_last_insert_rowid(self.db)
             for (i, p) in pts.enumerated() {
                 self.exec("INSERT OR REPLACE INTO track_pts(tid,seq,lat,lng,alt,t) VALUES(\(newId),\(i),\(p.lat),\(p.lng),\(p.alt),\(p.t));")

@@ -27,12 +27,14 @@ public final class Session: ObservableObject {
 
     private init() {
         // 默认指向安卓同款生产服务器：首次打开即可直接登录，与安卓用户互通（队伍/聊天/社区同一套接口）
-        server = d.string(forKey: "server") ?? Session.defaultServer
+        // 注意：api 尚未初始化前不能读 self.server，先用局部变量接住
+        let svr = d.string(forKey: "server") ?? Session.defaultServer
+        server = svr
         token = Keychain.get("token") ?? ""
         uid = d.string(forKey: "uid") ?? ""
         name = d.string(forKey: "name") ?? ""
         loggedIn = d.bool(forKey: "loggedIn")
-        api = (try? ApiClient(address: server)) ?? (try! ApiClient(address: "https://example.com"))
+        api = (try? ApiClient(address: svr)) ?? (try! ApiClient(address: "https://example.com"))
         api.setToken(token)
     }
 
