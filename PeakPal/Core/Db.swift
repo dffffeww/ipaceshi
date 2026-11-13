@@ -269,6 +269,11 @@ public final class Db {
         return readPoi("SELECT id,name,note,lat,lng,alt,t,type,tid FROM poi WHERE tid=? ORDER BY t ASC;", bind: tid)
     }
 
+    /// 全部标注点（地图页渲染用：全局兴趣点 + 各轨迹绑定，与安卓 Poi.list 同语义，上限 300）
+    public func allPois() -> [Poi] {
+        return readPoi("SELECT id,name,note,lat,lng,alt,t,type,tid FROM poi ORDER BY t DESC LIMIT 300;")
+    }
+
     /// 新增标注点（GPX/KMZ 导入、拍摄/语音落点用），返回新 id
     public func insertPoi(_ poi: Poi, tid: Int64) -> Int64 {
         var p = poi

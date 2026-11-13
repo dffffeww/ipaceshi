@@ -43,6 +43,9 @@ struct MeScreen: View {
                     }
                 }
                 Section("社区") {
+                    NavigationLink { ExpMedalScreen() } label: {
+                        Label("等级与勋章", systemImage: "medal")
+                    }
                     NavigationLink { ProfileEditScreen() } label: {
                         Label("编辑资料", systemImage: "person.crop.rectangle")
                     }

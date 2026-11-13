@@ -50,6 +50,7 @@ targets:
         NSMicrophoneUsageDescription: 队伍实时对讲需要使用麦克风。
         NSCameraUsageDescription: 用于拍摄徒步照片并分享到社区。
         NSPhotoLibraryUsageDescription: 用于选择照片发布帖子。
+        NSMotionUsageDescription: 读取今日步数换算徒步经验（每 100 步 = 1 经验）。
         UIBackgroundModes:
           - location
           - audio

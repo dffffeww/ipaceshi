@@ -9,10 +9,12 @@ import UIKit
 /// - 轨迹线叠加 + 记录中实时线（对应安卓 TrackOverlay + LiveOverlay）
 /// - 队友实时位置图层（TeamOverlay 移植：绿点+名字胶囊+呼吸光晕，自己不画）
 /// - 轨迹沿线卫生间（对应安卓 fetchToilets：GET /api/toilets/along）
+/// - 标注点系统（对应安卓 Poi：长按地图添加 途经点/水源/营地/山峰/危险，点选查看/删除）
 /// - 海拔探针、地形夸张调节、回中
 struct Map3DScreen: View {
     @StateObject private var vm = Map3DViewModel()
     @State private var showExagPicker = false
+    @State private var showPoiForm = false
 
     var body: some View {
         ZStack {
@@ -36,6 +38,11 @@ struct Map3DScreen: View {
                             Image(systemName: vm.trackOn ? "line.diagonal.fill" : "line.diagonal")
                                 .mapBtn()
                         }
+                        // 标注点图层开关（对应安卓 POI overlay）
+                        Button { vm.togglePois() } label: {
+                            Image(systemName: vm.poisOn ? "mappin.circle.fill" : "mappin.circle")
+                                .mapBtn()
+                        }
                         // 队友实时位置图层开关（对应安卓 TeamOverlay）
                         if TeamState.shared.inTeam {
                             Button { vm.toggleTeam() } label: {
@@ -47,8 +54,36 @@ struct Map3DScreen: View {
                     .padding(.trailing, 12)
                 }
                 Spacer()
-                // 底部信息条：海拔探针 / 队友点选信息 / 底图名（6 秒保持）
-                if !vm.probeText.isEmpty {
+                // 选中标注点管理卡（点标记弹出，可删除）
+                if let sel = vm.selectedPoi {
+                    HStack(spacing: 10) {
+                        Image(systemName: "mappin.and.ellipse").foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(Poi.typeName(sel.type)) · \(sel.name.isEmpty ? "未命名" : sel.name)")
+                                .font(.subheadline.weight(.semibold))
+                            if !sel.note.isEmpty {
+                                Text(sel.note).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                        }
+                        Spacer()
+                        Button(role: .destructive) {
+                            Db.shared.deletePoi(id: sel.id)
+                            vm.selectedPoi = nil
+                            vm.loadPois()
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        Button { vm.selectedPoi = nil } label: {
+                            Image(systemName: "xmark")
+                        }
+                    }
+                    .padding(12)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                }
+                // 底部信息条：海拔探针 / 队友点选信息条 / 底图名（6 秒保持）
+                if vm.selectedPoi == nil, !vm.probeText.isEmpty {
                     Text(vm.probeText)
                         .font(.footnote.monospacedDigit())
                         .padding(.horizontal, 14).padding(.vertical, 8)
@@ -65,8 +100,74 @@ struct Map3DScreen: View {
                 }
             }
         }
+        // 长按地图添加标注点（对应安卓 MapFragment 长按 → POI 五类型表单）
+        .sheet(item: $vm.poiDraft) { draft in
+            MapPoiForm(draft: draft) {
+                vm.loadPois()
+            }
+        }
         .onAppear { vm.activate() }
         .onDisappear { vm.deactivate() }
+    }
+}
+
+/// 添加标注点表单（类型 + 名称 + 备注；坐标取长按点，WGS84 存储）
+struct MapPoiForm: View {
+    let draft: Map3DViewModel.PoiDraft
+    var onSaved: (() -> Void)?
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var type = "waypoint"
+    @State private var name = ""
+    @State private var note = ""
+
+    static let types: [(key: String, icon: String)] = [
+        ("waypoint", "mappin"), ("water", "drop.fill"), ("camp", "tent.fill"),
+        ("peak", "mountain.2.fill"), ("danger", "exclamationmark.triangle.fill"),
+    ]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("位置") {
+                    Text(String(format: "%.5f, %.5f（WGS84）", draft.lat, draft.lng))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Section("类型") {
+                    Picker("类型", selection: $type) {
+                        ForEach(Self.types, id: \.key) { t in
+                            Label(Poi.typeName(t.key), systemImage: t.icon).tag(t.key)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                Section("信息") {
+                    TextField("名称（如：水源点 / 三岔路口）", text: $name)
+                    TextField("备注（选填）", text: $note)
+                }
+                Section {
+                    Button {
+                        var p = Poi()
+                        p.name = name.trimmingCharacters(in: .whitespaces)
+                        p.note = note.trimmingCharacters(in: .whitespaces)
+                        p.lat = draft.lat; p.lng = draft.lng
+                        p.type = type
+                        p.t = Int64(Date().timeIntervalSince1970 * 1000)
+                        _ = Db.shared.insertPoi(p, tid: 0)   // 全局兴趣点（地图页）
+                        onSaved?()
+                        dismiss()
+                    } label: {
+                        Text("保存标注点").frame(maxWidth: .infinity).bold()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .navigationTitle("添加标注点")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+            }
+        }
     }
 }
 
@@ -85,6 +186,16 @@ final class Map3DViewModel: NSObject, ObservableObject {
     @Published var probeText = ""
     @Published var trackOn = false
     @Published var teamOn = true        // 队友图层默认开（在队伍中时）
+    @Published var poisOn = true        // 标注点图层默认开
+    @Published var selectedPoi: Poi?    // 点选的标注点（底部管理卡）
+    @Published var poiDraft: PoiDraft?  // 非空时弹添加表单
+
+    /// 长按落点（WGS84），作为 Identifiable 供 sheet(item:)
+    struct PoiDraft: Identifiable {
+        let lat: Double
+        let lng: Double
+        var id: String { "\(lat),\(lng)" }
+    }
 
     weak var mapView: MLNMapView?
     var probeHoldUntil = Date.distantPast    // Coordinator 需要读写（队友点选信息条保持 6 秒）
@@ -113,6 +224,11 @@ final class Map3DViewModel: NSObject, ObservableObject {
         redrawOverlays()
     }
     func deactivate() {}
+
+    func togglePois() {
+        poisOn.toggle()
+        if poisOn { loadPois() } else { clearPois() }
+    }
 
     // MARK: - 坐标纠偏（高德系底图为 GCJ-02，需 wgs2gcj；影像/OSM 直投 WGS84）
 
@@ -153,6 +269,7 @@ final class Map3DViewModel: NSObject, ObservableObject {
         if LocationKit.shared.recording { updateLiveLine() }
         updateTeamLayer()
         updateSelfDot()
+        loadPois()
     }
 
     func recenter() {
@@ -306,6 +423,37 @@ final class Map3DViewModel: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - 标注点图层（对应安卓 MapFragment POI：全局 + 轨迹绑定，彩色胶囊）
+
+    func loadPois() {
+        guard let map = mapView else { return }
+        clearPois()
+        guard poisOn else { return }
+        for p in Db.shared.allPois() {
+            let a = PoiAnnotation()
+            a.poi = p
+            // 库里存 WGS84，按底图坐标系纠偏显示
+            a.coordinate = disp(p.lat, p.lng)
+            map.addAnnotation(a)
+        }
+    }
+
+    func clearPois() {
+        guard let map = mapView else { return }
+        for a in (map.annotations ?? []) where a is PoiAnnotation { map.removeAnnotation(a) }
+    }
+
+    /// 长按地图：取点（还原 WGS84）后弹添加表单
+    func requestPoi(at coord: CLLocationCoordinate2D) {
+        let wgs: (Double, Double)
+        if Map3DStyle.needsGcj() {
+            wgs = Coord.gcj2wgs(lat: coord.latitude, lng: coord.longitude)
+        } else {
+            wgs = (coord.latitude, coord.longitude)
+        }
+        poiDraft = PoiDraft(lat: wgs.0, lng: wgs.1)
+    }
+
     /// 点击地图取海拔/坐标（高德系底图点击为 GCJ02，需还原 WGS84；影像/OSM 直投）
     func onTap(at coord: CLLocationCoordinate2D) {
         probeHoldUntil = Date().addingTimeInterval(6)
@@ -343,6 +491,11 @@ struct Map3DContainer: UIViewRepresentable {
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.onTap(_:)))
         tap.delegate = context.coordinator
         map.addGestureRecognizer(tap)
+        // 长按添加标注点（对应安卓 MapFragment 长按 → POI 表单）
+        let long = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.onLongPress(_:)))
+        long.minimumPressDuration = 0.5
+        long.delegate = context.coordinator
+        map.addGestureRecognizer(long)
         vm.mapView = map
         return map
     }
@@ -361,6 +514,12 @@ struct Map3DContainer: UIViewRepresentable {
             guard let map = g.view as? MLNMapView else { return }
             let coord = map.convert(g.location(in: map), toCoordinateFrom: map)
             Task { @MainActor in vm.onTap(at: coord) }
+        }
+
+        @objc func onLongPress(_ g: UILongPressGestureRecognizer) {
+            guard g.state == .began, let map = g.view as? MLNMapView else { return }
+            let coord = map.convert(g.location(in: map), toCoordinateFrom: map)
+            Task { @MainActor in vm.requestPoi(at: coord) }
         }
 
         /// 手势防冲突：点按不影响地图自带手势
@@ -423,6 +582,37 @@ struct Map3DContainer: UIViewRepresentable {
                 v.centerOffset = CGVector(dx: 0, dy: -10)
                 return v
             }
+            if let pa = annotation as? PoiAnnotation, let p = pa.poi {
+                let id = "poi-\(p.type)"
+                let v = mapView.dequeueReusableAnnotationView(withIdentifier: id)
+                    ?? MLNAnnotationView(annotation: annotation, reuseIdentifier: id)
+                // 配色与安卓 Poi.java 一致：途经点绿 / 水源蓝 / 营地紫 / 山峰棕 / 危险红
+                let (icon, color): (String, UIColor) = {
+                    switch p.type {
+                    case "water": return ("💧", UIColor(red: 0.13, green: 0.59, blue: 0.95, alpha: 1))
+                    case "camp": return ("⛺", UIColor(red: 0.56, green: 0.14, blue: 0.67, alpha: 1))
+                    case "peak": return ("⛰", UIColor(red: 0.43, green: 0.30, blue: 0.26, alpha: 1))
+                    case "danger": return ("⚠️", UIColor(red: 0.83, green: 0.18, blue: 0.18, alpha: 1))
+                    default: return ("📍", UIColor(red: 0.11, green: 0.48, blue: 0.26, alpha: 1))
+                    }
+                }()
+                var n = p.name.isEmpty ? Poi.typeName(p.type) : p.name
+                if n.count > 6 { n = String(n.prefix(6)) + "…" }
+                let label = UILabel(frame: CGRect(x: 0, y: 0, width: 66, height: 20))
+                label.text = "\(icon)\(n)"
+                label.font = .systemFont(ofSize: 10, weight: .medium)
+                label.textColor = .white
+                label.backgroundColor = color.withAlphaComponent(0.92)
+                label.textAlignment = .center
+                label.layer.cornerRadius = 6
+                label.layer.masksToBounds = true
+                v.annotation = annotation
+                for sub in v.subviews { sub.removeFromSuperview() }
+                v.addSubview(label)
+                v.bounds = CGRect(x: 0, y: 0, width: 66, height: 20)
+                v.centerOffset = CGVector(dx: 0, dy: -10)
+                return v
+            }
             guard annotation is TeamMemberAnnotation else { return nil }
             let id = "teammate"
             let v = mapView.dequeueReusableAnnotationView(withIdentifier: id)
@@ -478,6 +668,13 @@ struct Map3DContainer: UIViewRepresentable {
         }
 
         public func mapView(_ mapView: MLNMapView, didSelect annotation: MLNAnnotation) {
+            if let a = annotation as? PoiAnnotation, let p = a.poi {
+                mapView.deselectAnnotation(a, animated: false)
+                Task { @MainActor [weak vm] in
+                    vm?.selectedPoi = p
+                }
+                return
+            }
             guard let a = annotation as? TeamMemberAnnotation, let m = a.member else { return }
             mapView.deselectAnnotation(a, animated: false)
             var info = m.name
@@ -509,6 +706,11 @@ final class SelfDotAnnotation: MLNPointAnnotation {}
 /// 轨迹沿线卫生间
 final class ToiletAnnotation: MLNPointAnnotation {
     var name = ""
+}
+
+/// 地图标注点（途经点/水源/营地/山峰/危险，对应安卓 Poi overlay）
+final class PoiAnnotation: MLNPointAnnotation {
+    var poi: Poi?
 }
 
 /// 记录中的实时轨迹线（与历史轨迹线类型区分，便于独立清理）

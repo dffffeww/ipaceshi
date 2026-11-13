@@ -373,9 +373,12 @@ struct NavigateScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var pois: [Poi] = []          // 本轨迹标注点（v7.108 iOS：与安卓导航页 v7.107 同款）
     @State private var tappedPoi: Poi?
+    /// 轨迹起点坐标（天气芯片定位用，对应安卓导航页天气芯片）
+    private let routeStart: TrackPt?
 
     init(track: Track, pts: [TrackPt]) {
         _engine = StateObject(wrappedValue: NavigateEngine(track: track, pts: pts))
+        routeStart = pts.first
     }
 
     var body: some View {
@@ -384,6 +387,15 @@ struct NavigateScreen: View {
 
             VStack(spacing: 0) {
                 Spacer()
+                // 天气芯片（对应安卓导航页 Weather 芯片：Open-Meteo + 15min 缓存）
+                if let s = routeStart {
+                    HStack {
+                        Spacer()
+                        WeatherChip(lat: s.lat, lng: s.lng)
+                            .padding(.bottom, 6)
+                    }
+                    .padding(.horizontal, 12)
+                }
                 // 路口转弯大横幅
                 if engine.navStarted {
                     HStack(spacing: 14) {

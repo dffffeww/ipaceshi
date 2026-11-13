@@ -299,9 +299,11 @@ struct FollowListScreen: View {
         do {
             let f = try await CommunityClient.shared.followList()
             let g = try await CommunityClient.shared.fansList()
+            let fl = f.map { Self.parse($0, defaultFollowing: true) }
+            let gl = g.map { Self.parse($0, defaultFollowing: false) }
             await MainActor.run {
-                follows = f.map(Self.parse($0, defaultFollowing: true))
-                fans = g.map(Self.parse($0, defaultFollowing: false))
+                follows = fl
+                fans = gl
                 loading = false
             }
         } catch {
@@ -326,5 +328,155 @@ struct FollowListScreen: View {
                 follows.remove(at: i)
             }
         } catch { err = error.localizedDescription }
+    }
+}
+
+// MARK: - 徒步等级 / 勋章（对应安卓 ExpKit + MedalListActivity：步数换经验，达标领取）
+
+import CoreMotion
+
+struct ExpMedalScreen: View {
+    @EnvironmentObject var session: Session
+    @State private var exp = 0
+    @State private var level = 1
+    @State private var nextExp = 300
+    @State private var todaySteps = 0
+    @State private var todayExp = 0
+    @State private var medals: [Medal] = []
+    @State private var loading = true
+    @State private var msg = ""
+    @State private var err = ""
+
+    struct Medal: Identifiable {
+        let key: String
+        let name: String
+        let level: Int
+        let desc: String
+        let claimed: Bool
+        let unlockable: Bool
+        var id: String { key }
+    }
+
+    private let pedometer = CMPedometer()
+
+    var body: some View {
+        Group {
+            if loading {
+                ProgressView().padding(.vertical, 40)
+            } else {
+                List {
+                    // 等级卡
+                    Section {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text("LV.\(level)").font(.system(size: 34, weight: .bold, design: .rounded))
+                                    .foregroundStyle(Color(red: 0.28, green: 0.62, blue: 0.36))
+                                Spacer()
+                                Text("\(exp) 经验").font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            // 升级进度条（下一级累计需求 = 150*n(n-1)/2）
+                            ProgressView(value: Double(min(exp, nextExp)), total: Double(max(1, nextExp)))
+                                .tint(Color(red: 0.28, green: 0.62, blue: 0.36))
+                            Text("距离 LV.\(level + 1) 还需 \(max(0, nextExp - exp)) 经验")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                        HStack {
+                            Text("今日步数").font(.subheadline).foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(todaySteps) 步 · 换 \(todayExp) 经验").font(.subheadline.monospacedDigit())
+                        }
+                        Text("每 100 步 = 1 经验，每日封顶 400（与安卓端同一套服务器数据）")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    // 勋章墙
+                    Section("勋章墙") {
+                        ForEach(medals) { m in
+                            HStack(spacing: 12) {
+                                Image(systemName: m.claimed ? "medal.fill" : "medal")
+                                    .font(.system(size: 26))
+                                    .foregroundStyle(m.claimed ? Color.orange : Color(.systemGray3))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(m.name).font(.subheadline.weight(.semibold))
+                                    Text(m.desc).font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if m.claimed {
+                                    Text("已领取").font(.caption).foregroundStyle(.orange)
+                                } else if m.unlockable {
+                                    Button {
+                                        Task { await claim(m) }
+                                    } label: {
+                                        Text("领取").font(.caption.bold())
+                                            .padding(.horizontal, 12).padding(.vertical, 6)
+                                            .background(Color.orange, in: Capsule())
+                                            .foregroundStyle(.white)
+                                    }
+                                } else {
+                                    Text("LV.\(m.level) 解锁").font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        if !msg.isEmpty { Text(msg).font(.footnote).foregroundStyle(.green) }
+                        if !err.isEmpty { Text(err).font(.footnote).foregroundStyle(.red) }
+                    }
+                }
+                .listStyle(.insetGrouped)
+            }
+        }
+        .navigationTitle("等级与勋章")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func load() async {
+        loading = true; err = ""
+        // 步数上报（每 100 步=1 经验；CMPedometer 读当天步数，对应安卓 ExpKit.report）
+        await reportSteps()
+        do {
+            let res = try await session.api.request("GET", "exp/me")
+            exp = (res["exp"] as? NSNumber)?.intValue ?? 0
+            level = (res["level"] as? NSNumber)?.intValue ?? 1
+            nextExp = (res["nextExp"] as? NSNumber)?.intValue ?? 0
+            todaySteps = (res["todaySteps"] as? NSNumber)?.intValue ?? 0
+            todayExp = (res["todayExp"] as? NSNumber)?.intValue ?? 0
+            if let items = res["medals"] as? [[String: Any]] {
+                medals = items.map {
+                    Medal(key: $0["key"] as? String ?? "",
+                          name: $0["name"] as? String ?? "",
+                          level: ($0["level"] as? NSNumber)?.intValue ?? 0,
+                          desc: $0["desc"] as? String ?? "",
+                          claimed: ($0["claimed"] as? NSNumber)?.intValue == 1 || ($0["claimed"] as? Bool == true),
+                          unlockable: ($0["unlockable"] as? NSNumber)?.intValue == 1 || ($0["unlockable"] as? Bool == true))
+                }
+            }
+        } catch {
+            err = error.localizedDescription
+        }
+        loading = false
+    }
+
+    /// 读系统计步并上报（节流：只在有步数增量时发一次）
+    private func reportSteps() async {
+        guard CMPedometer.isStepCountingAvailable() else { return }
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: Date())
+        do {
+            let data = try await pedometer.queryPedometerData(from: start, to: Date())
+            let steps = data?.numberOfSteps.intValue ?? 0
+            guard steps > 0 else { return }
+            _ = try? await session.api.request("POST", "exp/report", body: ["steps": steps])
+        } catch { }
+    }
+
+    private func claim(_ m: Medal) async {
+        do {
+            _ = try await session.api.request("POST", "medals/claim", body: ["key": m.key])
+            msg = "已领取「\(m.name)」勋章！"
+            await load()
+        } catch {
+            err = error.localizedDescription
+        }
     }
 }

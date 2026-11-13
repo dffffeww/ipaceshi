@@ -229,6 +229,11 @@ struct TrackDetailView: View {
                 statRow("最高海拔", String(format: "%.0f m", track.maxalt))
                 statRow("均速", TrackMath.fmtSpeed(track.distance, track.dur))
                 statRow("难度", TrackMath.stars(TrackMath.difficulty(distM: track.distance, ascM: track.asc)))
+                if pts.count >= 2 {
+                    ElevationChart(pts: pts)
+                        .frame(height: 130)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                }
             }
             Section("循迹") {
                 if pts.count >= 2 {
@@ -236,6 +241,12 @@ struct TrackDetailView: View {
                         NavigateScreen(track: track, pts: pts)
                     } label: {
                         Label("循迹导航（语音偏航提醒 + 转弯指引）", systemImage: "arrow.triangle.turn.up.right.circle.fill")
+                    }
+                    // 第三方地图导航到起点（对应安卓 ThirdNav：高德/百度/腾讯/Apple Maps 兜底）
+                    Button {
+                        ThirdNav.navigate(lat: pts[0].lat, lng: pts[0].lng, name: track.name)
+                    } label: {
+                        Label("用地图 App 导航到起点", systemImage: "arrow.triangle.branch")
                     }
                 } else {
                     Text("轨迹点不足，无法导航").font(.footnote).foregroundStyle(.secondary)
@@ -414,5 +425,74 @@ struct DetailMapContainer: UIViewRepresentable {
             }
             return nil
         }
+    }
+}
+
+// MARK: - 海拔剖面图（对应安卓 ElevationView：距离-海拔曲线 + 渐变填充 + 极值标注）
+
+struct ElevationChart: View {
+    let pts: [TrackPt]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Canvas { ctx, size in
+                // 采样（≤400 点）
+                let step = max(1, pts.count / 400)
+                var sample: [TrackPt] = []
+                for (i, p) in pts.enumerated() where i % step == 0 || i == pts.count - 1 { sample.append(p) }
+                guard sample.count >= 2 else { return }
+
+                let cum = cumulative(sample)
+                guard let totalM = cum.last, totalM > 0 else { return }
+                let alts = sample.map { $0.alt }
+                let lo = (alts.min() ?? 0), hi = (alts.max() ?? 1)
+                let span = max(30, hi - lo)
+                let padTop: CGFloat = 14, padBottom: CGFloat = 6
+
+                func x(_ m: Double) -> CGFloat { CGFloat(m / totalM) * size.width }
+                func y(_ a: Double) -> CGFloat {
+                    let f = CGFloat((a - lo) / span)   // 0=低 1=高
+                    return size.height - padBottom - f * (size.height - padTop - padBottom)
+                }
+
+                // 剖面填充路径（起点-曲线-终点-底边闭合）
+                var fill = Path()
+                fill.move(to: CGPoint(x: 0, y: size.height))
+                for (i, p) in sample.enumerated() {
+                    fill.addLine(to: CGPoint(x: x(cum[i]), y: y(p.alt)))
+                }
+                fill.addLine(to: CGPoint(x: size.width, y: size.height))
+                fill.closeSubpath()
+                let grad = Gradient(colors: [Color.green.opacity(0.35), Color.green.opacity(0.03)])
+                ctx.fill(fill, with: .linearGradient(grad, startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
+                // 曲线
+                var line = Path()
+                for (i, p) in sample.enumerated() {
+                    let pt = CGPoint(x: x(cum[i]), y: y(p.alt))
+                    if i == 0 { line.move(to: pt) } else { line.addLine(to: pt) }
+                }
+                ctx.stroke(line, with: .color(.green), lineWidth: 2)
+            }
+            HStack {
+                Text(String(format: "最低 %.0f m", minAlt))
+                    .font(.caption2).foregroundStyle(.secondary)
+                Spacer()
+                Text(String(format: "最高 %.0f m", maxAlt))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var minAlt: Double { pts.map(\.alt).min() ?? 0 }
+    private var maxAlt: Double { pts.map(\.alt).max() ?? 0 }
+
+    /// 累计距离（米）
+    private func cumulative(_ ps: [TrackPt]) -> [Double] {
+        var out: [Double] = [0]
+        for i in 1..<ps.count {
+            let d = TrackMath.haversine(lat1: ps[i-1].lat, lng1: ps[i-1].lng, lat2: ps[i].lat, lng2: ps[i].lng)
+            out.append(out[i-1] + d)
+        }
+        return out
     }
 }

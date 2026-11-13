@@ -80,6 +80,11 @@ struct RecordScreen: View {
     private var recordingBody: some View {
         VStack(spacing: 0) {
             gpsStatus.padding(.top, 8)
+            // 天气芯片（当前 GPS 位置，对应安卓记录页实时天气）
+            if let l = loc.lastLocation {
+                WeatherChip(lat: l.coordinate.latitude, lng: l.coordinate.longitude)
+                    .padding(.top, 8)
+            }
 
             VStack(spacing: 4) {
                 Text("当前里程")

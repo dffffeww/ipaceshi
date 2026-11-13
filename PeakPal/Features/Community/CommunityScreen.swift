@@ -13,6 +13,9 @@ struct CommunityScreen: View {
     @State private var err = ""
     @State private var showCreate = false
     @State private var announcement: (title: String, content: String)?
+    @State private var city = ""
+    @State private var showCityInput = false
+    @State private var cityInput = ""
 
     static let categories = ["全部", "综合", "线路攻略", "徒步笔记", "结伴同行", "装备交流"]
 
@@ -38,7 +41,7 @@ struct CommunityScreen: View {
                     }
                     .padding(.horizontal, 12).padding(.vertical, 8)
                 }
-                // 搜索条
+                // 搜索条 + 城市筛选（对应安卓城市筛选：按发帖地点过滤）
                 HStack {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("搜帖子", text: $keyword)
@@ -46,6 +49,22 @@ struct CommunityScreen: View {
                     if !keyword.isEmpty {
                         Button { keyword = ""; Task { await load() } } label: {
                             Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Button {
+                        showCityInput = true
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "location")
+                            Text(city.isEmpty ? "城市" : city)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(city.isEmpty ? .secondary : .green)
+                    }
+                    if !city.isEmpty {
+                        Button { city = ""; Task { await load() } } label: {
+                            Image(systemName: "xmark.circle.fill").font(.caption2).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -95,6 +114,16 @@ struct CommunityScreen: View {
                 }
             }
             .refreshable { await load() }
+            .alert("按城市筛选", isPresented: $showCityInput) {
+                TextField("如：深圳（发帖地点包含即可）", text: $cityInput)
+                Button("筛选") {
+                    city = cityInput.trimmingCharacters(in: .whitespaces)
+                    Task { await load() }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("筛选发帖地点包含该城市的帖子")
+            }
             .sheet(isPresented: $showCreate) {
                 CreatePostView { Task { await load() } }
             }
@@ -106,7 +135,7 @@ struct CommunityScreen: View {
         loading = true
         err = ""
         do {
-            posts = try await CommunityClient.shared.listPosts(category: category, keyword: keyword)
+            posts = try await CommunityClient.shared.listPosts(category: category, keyword: keyword, city: city)
             announcement = try? await CommunityClient.shared.latestAnnouncement()
         } catch {
             err = error.localizedDescription
@@ -192,75 +221,26 @@ struct PostDetailView: View {
     @State private var newComment = ""
     @State private var busy = false
     @State private var err = ""
-    @State private var viewerIdx: Int?
+    @State private var viewerIdx: ViewerIndex?
     @State private var showSignup = false
     @State private var showSignups = false
     @State private var signedUp = false
     @State private var askDeletePost = false
+    @State private var downloadingTrack = false
+
+    /// 是否本人发的帖（session.uid 存的是字符串 uid）
+    private var isMine: Bool {
+        guard post.uid > 0 else { return false }
+        return session.uid == String(post.uid) || Int(session.uid) == Int(post.uid)
+    }
 
     var body: some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(post.title).font(.title3.bold())
-                    HStack {
-                        Text(post.author).font(.subheadline.bold())
-                        Text("\(post.category) · \(TimeFmt.post(post.time))").font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        Button {
-                            Task { await toggleFollow() }
-                        } label: {
-                            Text(following ? "已关注" : "关注")
-                                .font(.caption.bold())
-                                .padding(.horizontal, 10).padding(.vertical, 4)
-                                .background(following ? Color(.systemGray5) : Color.green.opacity(0.15), in: Capsule())
-                                .foregroundStyle(following ? Color.secondary : Color.green)
-                        }
-                        .disabled(post.uid <= 0)
-                    }
-                    if !post.place.isEmpty {
-                        Label(post.place, systemImage: "mappin.and.ellipse")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text(post.content).font(.body)
-                    if !post.images.isEmpty {
-                        imageGrid
-                    }
-                    if post.track > 0 {
-                        Label("关联轨迹：\(post.trackName.isEmpty ? "点击下载" : post.trackName) · \(TrackMath.fmtDistance(post.trackDistance)) · \(TrackMath.fmtDuration(post.trackDur))",
-                              systemImage: "figure.hiking")
-                            .font(.caption).foregroundStyle(.green)
-                    }
-                    if post.companion {
-                        companionSection
-                    }
-                    if post.status == "pending" {
-                        Text("⏳ 审核中，仅自己可见").font(.caption).foregroundStyle(.orange)
-                    }
-                    if !post.reviewNote.isEmpty {
-                        Text("审核备注：\(post.reviewNote)").font(.caption).foregroundStyle(.red)
-                    }
-                }
-                .padding(.vertical, 4)
+                postHeader
             }
             Section {
-                Button {
-                    Task { await toggleLike() }
-                } label: {
-                    Label(liked ? "已赞 \(likeCount)" : "点赞 \(likeCount)",
-                          systemImage: liked ? "hand.thumbsup.fill" : "hand.thumbsup")
-                }
-                .buttonStyle(.bordered)
-                if post.uid > 0 {
-                    NavigationLink {
-                        ChatScreen(peer: ConversationsScreen.Conv(
-                            uid: Int(post.uid), username: "", nickname: post.author,
-                            lastText: "", lastKind: "text", lastCreated: 0, unread: 0))
-                    } label: {
-                        Label("发私信", systemImage: "ellipsis.message.fill")
-                    }
-                    .buttonStyle(.bordered)
-                }
+                supportSection
             } header: { Text("支持") }
             Section("\(comments.count) 条评论") {
                 ForEach(comments) { c in
@@ -299,7 +279,7 @@ struct PostDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             // 删除自己的帖子（对应安卓 PostDetailActivity 删除入口）
-            if post.uid > 0, session.uid == String(post.uid) || Int(session.uid) == Int(post.uid) {
+            if post.uid > 0, isMine {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(role: .destructive) { askDeletePost = true } label: {
                         Image(systemName: "trash")
@@ -323,12 +303,105 @@ struct PostDetailView: View {
         .task { await refresh() }
     }
 
+    // MARK: - 正文头部（标题/作者/关注/图片/轨迹卡/结伴/审核状态）
+
+    @ViewBuilder
+    private var postHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(post.title).font(.title3.bold())
+            HStack {
+                Text(post.author).font(.subheadline.bold())
+                Text("\(post.category) · \(TimeFmt.post(post.time))").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    Task { await toggleFollow() }
+                } label: {
+                    Text(following ? "已关注" : "关注")
+                        .font(.caption.bold())
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(following ? Color(.systemGray5) : Color.green.opacity(0.15), in: Capsule())
+                        .foregroundStyle(following ? Color.secondary : Color.green)
+                }
+                .disabled(post.uid <= 0)
+            }
+            if !post.place.isEmpty {
+                Label(post.place, systemImage: "mappin.and.ellipse")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text(post.content).font(.body)
+            if !post.images.isEmpty {
+                imageGrid
+            }
+            if post.track > 0 {
+                trackCard
+            }
+            if post.companion {
+                companionSection
+            }
+            if post.status == "pending" {
+                Text("⏳ 审核中，仅自己可见").font(.caption).foregroundStyle(.orange)
+            }
+            if !post.reviewNote.isEmpty {
+                Text("审核备注：\(post.reviewNote)").font(.caption).foregroundStyle(.red)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// 点赞/私信区
+    private var supportSection: some View {
+        Group {
+            Button {
+                Task { await toggleLike() }
+            } label: {
+                Label(liked ? "已赞 \(likeCount)" : "点赞 \(likeCount)",
+                      systemImage: liked ? "hand.thumbsup.fill" : "hand.thumbsup")
+            }
+            .buttonStyle(.bordered)
+            if post.uid > 0 {
+                NavigationLink {
+                    ChatScreen(peer: ConversationsScreen.Conv(
+                        uid: Int(post.uid), username: "", nickname: post.author,
+                        lastText: "", lastKind: "text", lastCreated: 0, unread: 0))
+                } label: {
+                    Label("发私信", systemImage: "ellipsis.message.fill")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    /// 关联轨迹卡（点击下载到本地轨迹库，对应安卓帖子轨迹卡 TrackThumb 下载）
+    private var trackCard: some View {
+        Button {
+            Task { await downloadPostTrack() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "figure.hiking")
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(Color.green, in: RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("轨迹：\(post.trackName.isEmpty ? "路线 #\(post.track)" : post.trackName)")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Text("\(TrackMath.fmtDistance(post.trackDistance)) · \(TrackMath.fmtDuration(post.trackDur)) · 点击下载到轨迹库")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if downloadingTrack { ProgressView() }
+                else { Image(systemName: "icloud.and.arrow.down").foregroundStyle(.green) }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - 图片九宫格（3 列，点击全屏浏览）
 
     private var imageGrid: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
             ForEach(Array(post.images.enumerated()), id: \.offset) { i, src in
-                Button { viewerIdx = ViewerIndex(i) } label: {
+                Button { viewerIdx = ViewerIndex(value: i) } label: {
                     RemoteImg(src: src)
                         .frame(height: 104)
                         .frame(maxWidth: .infinity)
@@ -417,6 +490,42 @@ struct PostDetailView: View {
             comments = try await CommunityClient.shared.listComments(pid: post.id)
             post.comments = comments.count
         } catch { err = error.localizedDescription }
+    }
+
+    /// 下载帖子关联轨迹到本地（对应安卓帖子轨迹卡下载：GET tracks/{id} 含 points）
+    private func downloadPostTrack() async {
+        guard !downloadingTrack else { return }
+        downloadingTrack = true
+        defer { downloadingTrack = false }
+        do {
+            let res = try await session.api.request("GET", "tracks/\(post.track)")
+            var t = Track()
+            t.name = (res["name"] as? String) ?? (post.trackName.isEmpty ? "路线 #\(post.track)" : post.trackName)
+            t.start = (res["start"] as? NSNumber)?.int64Value ?? 0
+            t.end = (res["end"] as? NSNumber)?.int64Value ?? 0
+            t.dur = (res["dur"] as? NSNumber)?.int64Value ?? 0
+            t.cloudId = post.track
+            var pts: [TrackPt] = []
+            if let arr = res["points"] as? [[String: Any]] {
+                for p in arr {
+                    let pt = TrackPt(
+                        lat: (p["lat"] as? NSNumber)?.doubleValue ?? 0,
+                        lng: (p["lng"] as? NSNumber)?.doubleValue ?? 0,
+                        alt: (p["alt"] as? NSNumber)?.doubleValue ?? 0,
+                        t: (p["t"] as? NSNumber)?.int64Value ?? 0)
+                    if pt.isValid { pts.append(pt) }
+                }
+            }
+            guard pts.count >= 2 else { err = "该轨迹云端暂无轨迹点"; return }
+            var inserted = Db.shared.listTracks().first(where: { $0.cloudId == post.track })
+            if inserted == nil {
+                _ = Db.shared.insertTrack(&t, pts: pts)
+            }
+            err = ""
+            await MainActor.run { post.trackName = t.name }
+        } catch {
+            err = "下载失败：\(error.localizedDescription)"
+        }
     }
 
     private func delPost() async {

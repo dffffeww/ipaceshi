@@ -109,11 +109,14 @@ public final class CommunityClient {
 
     // MARK: - 帖子
 
-    /// 帖子列表（category 传 nil/空 = 全部；keyword 模糊搜索）
-    public func listPosts(category: String?, keyword: String?) async throws -> [Post] {
+    /// 帖子列表（category 传 nil/空 = 全部；keyword 模糊搜索；city=按地点筛选）
+    public func listPosts(category: String?, keyword: String?, city: String? = nil) async throws -> [Post] {
         var qs: [String] = []
         if let c = category, !c.isEmpty, c != "全部" {
             qs.append("category=\(enc(c))")
+        }
+        if let city = city?.trimmingCharacters(in: .whitespaces), !city.isEmpty, city != "全部" {
+            qs.append("city=\(enc(city))")
         }
         if let k = keyword?.trimmingCharacters(in: .whitespaces), !k.isEmpty {
             qs.append("q=\(enc(k))")
