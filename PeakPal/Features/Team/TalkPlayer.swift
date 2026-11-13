@@ -311,8 +311,8 @@ public final class TalkPlayer: ObservableObject {
                             f.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
                                 memcpy(ioData.pointee.mBuffers.mData! + Int(byteOff), raw.baseAddress!, n)
                             }
-                            outDescPtr?[Int(filled)] = AudioStreamPacketDescription(
-                                mStartOffset: byteOff, mVariableFramesInPacket: 0, mDataByteSize: UInt32(n))
+                            outDescPtr?.pointee?[Int(filled)] = AudioStreamPacketDescription(
+                                mStartOffset: Int64(byteOff), mVariableFramesInPacket: 0, mDataByteSize: UInt32(n))
                             byteOff += UInt32(n)
                             filled += 1
                             ctxPtr.pointee.idx += 1
