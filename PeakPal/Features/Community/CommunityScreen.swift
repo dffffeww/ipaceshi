@@ -226,7 +226,7 @@ struct PostDetailView: View {
                 if post.uid > 0 {
                     NavigationLink {
                         ChatScreen(peer: ConversationsScreen.Conv(
-                            uid: post.uid, username: "", nickname: post.author,
+                            uid: Int(post.uid), username: "", nickname: post.author,
                             lastText: "", lastKind: "text", lastCreated: 0, unread: 0))
                     } label: {
                         Label("发私信", systemImage: "ellipsis.message.fill")
