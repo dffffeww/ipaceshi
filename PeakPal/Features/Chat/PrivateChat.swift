@@ -398,7 +398,8 @@ struct PrivateBubble: View {
     }
 }
 
-/// 系统通知页（对应安卓 NotifyActivity）
+/// 系统通知页（对应安卓 NotifyActivity 重排版）：分类图标徽章（关注/审核/勋章/系统）
+/// + 未读高亮侧条 + 卡片式列表 + 头部未读统计，进入即全部标记已读
 struct NotifyScreen: View {
     @EnvironmentObject var session: Session
     @State private var items: [Item] = []
@@ -414,23 +415,43 @@ struct NotifyScreen: View {
     }
 
     var body: some View {
-        List {
-            if items.isEmpty { Text("暂无通知").font(.footnote).foregroundStyle(.secondary) }
-            ForEach(items) { n in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        if n.read == 0 {
-                            Circle().fill(Color.red).frame(width: 8, height: 8)
+        Group {
+            if items.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "bell.slash").font(.largeTitle).foregroundStyle(.secondary)
+                    Text("暂无消息").font(.subheadline).foregroundStyle(.secondary)
+                    Text("关注、审核结果和获得的勋章都会出现在这里")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(items) { n in
+                            NotifyCard(item: n,
+                                       icon: Self.kindIcon(n.kind, n.title),
+                                       color: Self.kindColor(n.kind, n.title))
                         }
-                        Text(n.title).font(.subheadline.bold())
-                        Spacer()
-                        Text(TimeFmt.post(n.created)).font(.caption2).foregroundStyle(.secondary)
                     }
-                    Text(n.text).font(.caption).foregroundStyle(.secondary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
                 }
             }
         }
-        .navigationTitle("系统通知")
+        .background(Color(red: 0.965, green: 0.973, blue: 0.961))
+        .navigationTitle("消息中心")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if unread > 0 {
+                    Text("未读 \(unread)")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Color.red, in: Capsule())
+                }
+            }
+        }
         .onAppear {
             Task {
                 do {
@@ -451,6 +472,80 @@ struct NotifyScreen: View {
                 } catch { }
             }
         }
+    }
+
+    /// 分类 → 图标（对应后端 kind：follow/review/medal/系统默认；标题兜底判断与安卓一致）
+    static func kindIcon(_ kind: String, _ title: String) -> String {
+        let k = kind.lowercased()
+        if k.contains("follow") || title.contains("关注") { return "👥" }
+        if k.contains("review") || k.contains("audit") || title.contains("审核") { return "📋" }
+        if k.contains("medal") || title.contains("勋章") { return "🏅" }
+        if k.contains("system") || k.contains("announce") || title.contains("公告") || title.contains("系统") { return "📢" }
+        return "🔔"
+    }
+
+    /// 分类 → 主题色（关注蓝 / 审核橙 / 勋章金 / 系统绿）
+    static func kindColor(_ kind: String, _ title: String) -> Color {
+        let k = kind.lowercased()
+        if k.contains("follow") || title.contains("关注") { return Color(red: 0.12, green: 0.53, blue: 0.90) }
+        if k.contains("review") || k.contains("audit") || title.contains("审核") { return Color(red: 0.98, green: 0.55, blue: 0.0) }
+        if k.contains("medal") || title.contains("勋章") { return Color(red: 0.98, green: 0.66, blue: 0.15) }
+        if k.contains("system") || k.contains("announce") || title.contains("公告") || title.contains("系统") { return Color(red: 0.18, green: 0.49, blue: 0.20) }
+        return Color(red: 0.36, green: 0.54, blue: 0.40)
+    }
+}
+
+/// 通知卡片：未读彩色侧条 + 图标徽章 + 标题/时间 + 正文（与安卓 NotifyActivity 同款视觉）
+struct NotifyCard: View {
+    let item: NotifyScreen.Item
+    let icon: String
+    let color: Color
+
+    private var unread: Bool { item.read == 0 }
+
+    /// 时间口径与安卓一致：今天 HH:mm / 昨天 HH:mm / MM-dd
+    private var timeText: String {
+        let d = Date(timeIntervalSince1970: Double(item.created) / 1000)
+        let hm = DateFormatter(); hm.dateFormat = "HH:mm"
+        let md = DateFormatter(); md.dateFormat = "MM-dd"
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return hm.string(from: d) }
+        if cal.isDateInYesterday(d) { return "昨天 " + hm.string(from: d) }
+        return md.string(from: d)
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            if unread {
+                Rectangle()
+                    .fill(color)
+                    .frame(width: 4)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    Text(icon)
+                        .font(.system(size: 17))
+                        .frame(width: 38, height: 38)
+                        .background(color.opacity(0.10), in: Circle())
+                    Text(item.title)
+                        .font(.subheadline.weight(unread ? .bold : .regular))
+                        .foregroundStyle(unread ? Color(red: 0.09, green: 0.14, blue: 0.13)
+                                               : Color(red: 0.36, green: 0.42, blue: 0.38))
+                    Spacer()
+                    Text(timeText).font(.caption2).foregroundStyle(.secondary)
+                }
+                Text(item.text)
+                    .font(.caption)
+                    .foregroundStyle(unread ? Color(red: 0.24, green: 0.29, blue: 0.26)
+                                            : Color(red: 0.54, green: 0.59, blue: 0.55))
+                    .lineLimit(3)
+                    .padding(.leading, 48)
+            }
+            .padding(12)
+        }
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white))
+        .clipShape(RoundedRectangle(cornerRadius: 14))   // 未读侧条随卡片圆角裁切
+        .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
     }
 }
 

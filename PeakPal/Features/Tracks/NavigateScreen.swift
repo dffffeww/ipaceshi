@@ -30,6 +30,7 @@ public final class NavigateEngine: NSObject, ObservableObject {
     @Published public private(set) var walked: [TrackPt] = []       // 已走段（渲染虚点）
     @Published public private(set) var gpsAlt: Double = 0
     @Published public private(set) var etaText = "--"
+    @Published public private(set) var targetBearing: Double = 0    // 指向下一轨迹点的方位角（0°=正北）
 
     // MARK: - 内部（与安卓字段一一对应）
 
@@ -211,6 +212,12 @@ public final class NavigateEngine: NSObject, ObservableObject {
         ascRemain = ascR
         descRemain = descR
         etaText = TrackMath.fmtEtaMin(TrackMath.estimateMinutes(distM: remaining, ascM: ascR))
+
+        // 导航方向箭头（对应安卓 v7.119：面板时间列换成箭头）——指向轨迹下一个前进点
+        let ni = reversed ? max(0, proj.seg) : min(track.count - 1, proj.seg + 1)
+        let here = TrackPt(lat: loc.coordinate.latitude, lng: loc.coordinate.longitude,
+                           alt: loc.altitude, t: Int64(Date().timeIntervalSince1970 * 1000))
+        targetBearing = Self.bearingOf(here, track[ni])
 
         // 已走段（正向=起点→当前段；反向=终点→当前段）
         let from = reversed ? proj.seg + 1 : 0
@@ -457,9 +464,15 @@ struct NavigateScreen: View {
                     Text("剩余").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(engine.etaText).font(.subheadline.bold())
-                    Text("预计还需").font(.caption).foregroundStyle(.secondary)
+                // 导航方向箭头（对应安卓 v7.119：指向轨迹下一个前进点，正北为 0°，地图不旋转所以直接按方位角旋转）
+                VStack(spacing: 2) {
+                    Image(systemName: "location.north.fill")
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color(red: 0.28, green: 0.62, blue: 0.36), in: Circle())
+                        .rotationEffect(.degrees(engine.targetBearing))
+                    Text("前进方向").font(.caption).foregroundStyle(.secondary)
                 }
             }
             Text(String(format: "已行 %.2f km · 偏离 %.0f m · GPS海拔 ≈%.0f m · 累计升/降 %.0f/%.0f m",
