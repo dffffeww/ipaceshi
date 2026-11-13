@@ -2,12 +2,13 @@ import SwiftUI
 import PhotosUI
 import UIKit
 import AVFoundation
+import AVKit
 
 /// 队伍聊天页（1:1 移植自安卓 TeamChatActivity 微信式聊天）：
 /// - 气泡列表：先读本地历史（离线可用），监听 TeamChatSync.chatTick 增量刷新
-/// - 发送：文本/图片（video/track 卡片后续迭代），统一 POST /api/chat {code,pid,name,kind,text,audio?}
+/// - 发送：文本/图片/语音（点麦克风录一段，≤30秒）/视频卡片/轨迹卡片，统一 POST /api/team/chat
 /// - 电话模式：对讲分片（🎙对讲| 前缀）不进聊天框——本地历史一并过滤
-/// - 媒体消息点击可看大图/回听语音
+/// - 媒体消息点击可看大图/回听语音/播放视频/轨迹导航
 struct TeamChatScreen: View {
     @EnvironmentObject var team: TeamState
     @StateObject private var sync = TeamChatSync.shared
@@ -19,6 +20,10 @@ struct TeamChatScreen: View {
     @State private var err = ""
     @State private var showPicker = false
     @State private var playingPath: String?
+    // 语音消息录制（对应安卓聊天页录音按钮）
+    @State private var recorder: AVAudioRecorder?
+    @State private var micRecording = false
+    @State private var recStartAt = Date()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -54,6 +59,11 @@ struct TeamChatScreen: View {
             }
             // 输入区
             HStack(spacing: 8) {
+                Button { toggleMic() } label: {
+                    Image(systemName: micRecording ? "stop.circle.fill" : "mic.fill")
+                        .font(.title3)
+                        .foregroundStyle(micRecording ? Color.red : Color.green)
+                }
                 Button { showPicker = true } label: {
                     Image(systemName: "photo").font(.title3)
                         .foregroundStyle(Color.green)
@@ -115,7 +125,7 @@ struct TeamChatScreen: View {
                     "text": text,
                 ]
                 if let b64 = base64 { body["audio"] = b64 }
-                let res = try await Session.shared.api.request("POST", "chat", body: body)
+                let res = try await Session.shared.api.request("POST", "team/chat", body: body)
                 guard res["ok"] as? Bool == true else {
                     throw NSError(domain: "chat", code: 1,
                                   userInfo: [NSLocalizedDescriptionKey: res["error"] as? String ?? "服务器拒绝"])
@@ -163,8 +173,54 @@ struct TeamChatScreen: View {
         send("image", text: "[图片]", base64: data.base64EncodedString())
     }
 
-    private func sendImageAfterPick(_ image: UIImage) {
-        sendImage(image)
+    // MARK: - 语音消息（对应安卓聊天页录音发送：AAC m4a ≤30 秒）
+
+    /// 点麦克风开始录 → 再点结束并发送
+    private func toggleMic() {
+        if micRecording {
+            let durMs = Int64(Date().timeIntervalSince(recStartAt) * 1000)
+            let path = recorder?.url.path
+            recorder?.stop()
+            recorder = nil
+            micRecording = false
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            guard let path, durMs >= 1000 else { return }
+            sendVoiceFile(path, durMs: durMs)
+        } else {
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+                try session.setActive(true)
+                let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent("teamchat", isDirectory: true)
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let url = dir.appendingPathComponent("rec_\(Int(Date().timeIntervalSince1970 * 1000)).m4a")
+                let settings: [String: Any] = [
+                    AVFormatIDKey: kAudioFormatMPEG4AAC,
+                    AVSampleRateKey: 44100,
+                    AVNumberOfChannelsKey: 1,
+                    AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+                ]
+                recorder = try AVAudioRecorder(url: url, settings: settings)
+                recorder?.record()
+                recStartAt = Date()
+                micRecording = recorder != nil
+            } catch {
+                err = "麦克风不可用：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func sendVoiceFile(_ path: String, durMs: Int64) {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return }
+        let b64 = data.base64EncodedString()
+        guard b64.count <= 700_000 else {
+            err = "语音太长，请控制在 30 秒内"
+            try? FileManager.default.removeItem(atPath: path)
+            return
+        }
+        send("voice", text: "\(max(1, durMs / 1000))″", base64: b64)
+        try? FileManager.default.removeItem(atPath: path)
     }
 }
 // MARK: - 气泡
@@ -222,10 +278,45 @@ struct ChatBubble: View {
                     .clipShape(shape)
             }
             .buttonStyle(.plain)
-        } else if m.kind == "video", let file = m.file {
-            Label("视频消息（点按播放后续迭代）", systemImage: "video.fill")
+        } else if m.kind == "video", let file = m.file, FileManager.default.fileExists(atPath: file) {
+            // 视频消息：点击播放（对应安卓 ChatUi 视频气泡）
+            NavigationLink {
+                VideoPlayer(player: AVPlayer(url: URL(fileURLWithPath: file)))
+                    .frame(maxWidth: .infinity, maxHeight: 420)
+                    .background(Color.black.ignoresSafeArea())
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "play.circle.fill").font(.title2)
+                    Text(m.text.isEmpty ? "[视频]" : m.text)
+                }
                 .font(.subheadline)
-                .padding(10).background(Color(.systemGray5), in: shape)
+                .foregroundStyle(m.mine ? .white : .primary)
+                .padding(10)
+                .background(m.mine ? Color.green : Color(.systemGray5), in: shape)
+            }
+            .buttonStyle(.plain)
+        } else if m.kind == "track", let file = m.file, let meta = TrackMeta.load(file) {
+            // 轨迹分享卡（对应安卓轨迹消息卡）：名称 + 里程/用时/爬升 + 一键导航
+            NavigationLink {
+                NavigateScreen(track: meta.track(m.text), pts: meta.pts)
+            } label: {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "figure.hiking").foregroundStyle(.green)
+                        Text(m.text.isEmpty ? "轨迹分享" : m.text)
+                            .font(.subheadline.bold())
+                            .foregroundStyle(m.mine ? .white : .primary)
+                    }
+                    Text(String(format: "%.1f km · %d 分 · 爬升 %.0f 米",
+                                meta.dist / 1000, meta.dur / 60, meta.asc))
+                        .font(.caption)
+                        .foregroundStyle(m.mine ? .white.opacity(0.85) : .secondary)
+                }
+                .padding(10)
+                .frame(maxWidth: 220, alignment: .leading)
+                .background(m.mine ? Color.green : Color(.systemGray5), in: shape)
+            }
+            .buttonStyle(.plain)
         } else if m.kind == "voice", let file = m.file {
             // 语音消息：点击回听（对讲分片已被上层过滤，不会出现在这里）
             Button {
@@ -328,5 +419,47 @@ struct ZoomImageSheet: View {
             .resizable().scaledToFit()
             .ignoresSafeArea()
             .background(Color.black.ignoresSafeArea())
+    }
+}
+
+// MARK: - 轨迹分享卡解析（与安卓 shareTrack 的 meta JSON 逐字段一致：id/dist/dur/asc/pts）
+
+struct TrackMeta {
+    let name: String
+    let dist: Double          // 米
+    let dur: Int64            // 秒
+    let asc: Double           // 米
+    let pts: [TrackPt]        // 抽稀点（分享时未上传云端才内嵌；有 cloud id 时为空）
+
+    /// 从本地落盘的 meta JSON 解析（msg_<id>.json）
+    static func load(_ path: String) -> TrackMeta? {
+        guard let raw = FileManager.default.contents(atPath: path),
+              let o = (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any] else { return nil }
+        let dist = (o["dist"] as? NSNumber)?.doubleValue ?? 0
+        let dur = (o["dur"] as? NSNumber)?.int64Value ?? 0
+        let asc = (o["asc"] as? NSNumber)?.doubleValue ?? 0
+        var list: [TrackPt] = []
+        if let s = o["pts"] as? String, !s.isEmpty {
+            for pair in s.split(separator: ";") {
+                let xy = pair.split(separator: ",")
+                if xy.count >= 2, let la = Double(xy[0]), let ln = Double(xy[1]),
+                   la >= -90, la <= 90, ln >= -180, ln <= 180 {
+                    list.append(TrackPt(lat: la, lng: ln, alt: 0, t: 0))
+                }
+            }
+        }
+        return TrackMeta(name: "", dist: dist, dur: dur, asc: asc, pts: list)
+    }
+
+    /// 组装可导航的 Track 对象（距离/爬升用 meta，名称取消息 text）
+    func track(_ name: String = "") -> Track {
+        var t = Track()
+        t.name = name.isEmpty ? "队友分享" : name
+        t.distance = dist
+        t.asc = asc
+        t.dur = dur * 1000
+        t.start = Int64(Date().timeIntervalSince1970 * 1000) - dur * 1000
+        t.end = Int64(Date().timeIntervalSince1970 * 1000)
+        return t
     }
 }

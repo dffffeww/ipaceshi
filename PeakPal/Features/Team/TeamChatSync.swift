@@ -130,7 +130,7 @@ public final class TeamChatSync: ObservableObject {
         let t = ((o["t"] as? NSNumber)?.doubleValue ?? 0) * 1000
         let isTalk = kind == "voice" && text.hasPrefix("🎙对讲|")
 
-        if kind == "voice" || kind == "image" || kind == "video" {
+        if kind == "voice" || kind == "image" || kind == "video" || kind == "track" {
             guard let b64 = o["audio"] as? String, let raw = Data(base64Encoded: b64), !raw.isEmpty else {
                 advanceCursor(id); msgLock.unlock(); return
             }
@@ -143,6 +143,11 @@ public final class TeamChatSync: ObservableObject {
                     let stat = tp.count > 3 ? tp[3] : "m"
                     TalkPlayer.shared.enqueue(data: raw, id: id, from: name, seq: seq, stat: stat)
                 }
+            } else if kind == "track" {
+                // 轨迹分享卡：meta JSON 落盘（name/dist/dur/asc + 抽稀点 pts），气泡页可解析展示/导航
+                let file = Self.saveMedia(raw, id: id, ext: "json")
+                Db.shared.addTeamMsg(id: id, code: team.code, pid: pid2, name: name,
+                                     kind: kind, text: text, file: file, t: Int64(t), mine: mine)
             } else {
                 // 聊天媒体：落盘 Documents/teamchat/msg_<id>.<ext>（可回听）
                 let ext = kind == "voice" ? "m4a" : (kind == "image" ? "jpg" : "mp4")

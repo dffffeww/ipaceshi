@@ -9,7 +9,7 @@ import Foundation
 ///     leave = POST /api/team/leave { code, pid }
 ///     pos   = POST /api/team/pos   { code, pid, myName, uid?, lat, lng, alt } → 返回 members
 ///     pull  = GET  /api/team/get?code=…（冷启动无定位/上报失败时的兜底）
-///     chat  = POST /api/chat       { code, pid, name, kind, text, audio }
+///     chat  = POST /api/team/chat  { code, pid, name, kind, text, audio }
 public final class TeamState: ObservableObject {
     public static let shared = TeamState()
 
@@ -72,13 +72,84 @@ public final class TeamState: ObservableObject {
         }
     }
 
+    // MARK: - 创建/退出
+
+    /// 创建队伍（POST /api/team/create，协议与安卓 TeamActivity 创建表单一致：
+    /// 同 pid 1 分钟限频 1 次、每人最多 30 个队伍；成功返回 6 位队伍码）
+    @MainActor
+    public func createTeam(name n: String, me: String) async throws {
+        if pid.isEmpty { pid = newPid() }   // 先持久化本机身份 ID，保证请求体与存储一致
+        var body: [String: Any] = [
+            "pid": pid,
+            "name": n.isEmpty ? "我的队伍" : n,
+        ]
+        let myUid = self.myUid
+        if myUid > 0 { body["uid"] = myUid }
+        if !me.isEmpty { body["myName"] = me }
+        let res = try await Session.shared.api.request("POST", "team/create", body: body)
+        guard res["ok"] as? Bool == true, let c = res["code"] as? String else {
+            throw NSError(domain: "team", code: 4,
+                          userInfo: [NSLocalizedDescriptionKey: errMsg(res, "创建失败")])
+        }
+        code = c
+        myName = me
+        let tname = res["name"] as? String ?? n
+        teamName = tname.isEmpty ? "我的队伍" : tname
+        ownerCache = true
+        startReport()
+        TeamChatSync.shared.start()
+    }
+
+    /// 队长身份缓存（team/info 校验结果；加入别人队伍默认 false，进队伍页时刷新）
+    @Published public private(set) var isOwner = false
+
+    private var ownerCache = false
+
+    /// 刷新队长身份（POST /api/team/info：返回 owner 布尔 + 成员表）
+    public func refreshOwner() async {
+        guard inTeam else { return }
+        do {
+            let res = try await Session.shared.api.request("POST", "team/info", body: [
+                "code": code, "pid": pid,
+            ])
+            if res["ok"] as? Bool == true, let o = res["owner"] as? Bool {
+                await MainActor.run { self.isOwner = o; self.ownerCache = o }
+            }
+        } catch { }
+    }
+
+    /// 解散队伍（POST /api/team/dissolve，仅队长）
+    public func dissolve() async throws {
+        let res = try await Session.shared.api.request("POST", "team/dissolve", body: [
+            "code": code, "pid": pid,
+        ])
+        guard res["ok"] as? Bool == true else {
+            throw NSError(domain: "team", code: 5,
+                          userInfo: [NSLocalizedDescriptionKey: errMsg(res, "解散失败")])
+        }
+        leaveLocal()
+    }
+
+    /// 转让队长（POST /api/team/transfer，仅队长）
+    public func transfer(to targetPid: String) async throws {
+        let res = try await Session.shared.api.request("POST", "team/transfer", body: [
+            "code": code, "pid": pid, "to_pid": targetPid,
+        ])
+        guard res["ok"] as? Bool == true else {
+            throw NSError(domain: "team", code: 6,
+                          userInfo: [NSLocalizedDescriptionKey: errMsg(res, "转让失败")])
+        }
+        await MainActor.run { self.isOwner = false; self.ownerCache = false }
+    }
+
     // MARK: - 加入/退出
 
     /// 加入队伍（POST /api/team/join，协议与安卓 joinDialog 一致）
     @MainActor
     public func join(code c: String, name n: String) async throws {
+        if pid.isEmpty { pid = newPid() }   // 先持久化本机身份 ID，保证请求体与存储一致
         var body: [String: Any] = [
-            "pid": pid.isEmpty ? newPid() : pid,
+            "pid": pid,
             "code": c,
         ]
         let myUid = self.myUid
@@ -91,8 +162,8 @@ public final class TeamState: ObservableObject {
         }
         // await 后恢复主线程再写 @Published（join 由 @MainActor UI 调用，此处显式保证）
         code = c
-        pid = res["pid"] as? String ?? pid
         myName = n
+        isOwner = false
         let tname = res["name"] as? String ?? ""
         if !tname.isEmpty { teamName = tname }
         startReport()
@@ -114,6 +185,8 @@ public final class TeamState: ObservableObject {
         code = ""
         pid = ""
         members = []
+        isOwner = false
+        ownerCache = false
         stopReport()
         TeamChatSync.shared.stop()
         TalkPlayer.shared.shutdown()
@@ -218,10 +291,10 @@ public final class TeamState: ObservableObject {
 
     // MARK: - 聊天/对讲发送（安卓 iOS 同一接口）
 
-    /// 发送聊天/对讲消息
+    /// 发送聊天/对讲消息（与安卓同一接口：POST /api/team/chat）
     @discardableResult
     public func chat(body: [String: Any]) async throws -> [String: Any] {
-        let res = try await Session.shared.api.request("POST", "chat", body: body)
+        let res = try await Session.shared.api.request("POST", "team/chat", body: body)
         guard res["ok"] as? Bool == true else {
             throw NSError(domain: "team", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: errMsg(res, "服务器拒绝")])

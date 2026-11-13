@@ -12,6 +12,10 @@ struct TeamScreen: View {
     @State private var nameInput = ""
     @State private var busy = false
     @State private var err = ""
+    @State private var showCreate = false
+    @State private var createName = ""
+    @State private var createMe = ""
+    @State private var showTransfer = false
 
     var body: some View {
         NavigationStack {
@@ -65,6 +69,18 @@ struct TeamScreen: View {
                                 LocationKit.shared.stopRecording()
                             }
                         } label: { Label("退出队伍", systemImage: "rectangle.portrait.and.arrow.right") }
+                    }
+
+                    // 队长管理（对应安卓 TeamActivity 队长菜单：解散/转让）
+                    if team.isOwner {
+                        Section("队长管理") {
+                            Button(role: .destructive) {
+                                showTransfer = true
+                            } label: { Label("转让队长", systemImage: "person.badge.key.fill") }
+                            Button(role: .destructive) {
+                                Task { try? await team.dissolve() }
+                            } label: { Label("解散队伍", systemImage: "trash.fill") }
+                        }
                     }
 
                     // 成员实时列表（对应安卓 TeamActivity 成员条目）
@@ -128,12 +144,23 @@ struct TeamScreen: View {
                         Text("文字/图片消息 · 记录存本机 · 对讲分片不出现在聊天记录")
                     }
                 } else {
+                    Section("创建队伍") {
+                        TextField("队伍名（如：周末小五台）", text: $createName)
+                        TextField("我的昵称", text: $createMe)
+                        if !err.isEmpty { Text(err).font(.footnote).foregroundStyle(.red) }
+                        Button {
+                            create()
+                        } label: {
+                            if busy { ProgressView().frame(maxWidth: .infinity) }
+                            else { Text("创建（自动生成 6 位队伍码）").frame(maxWidth: .infinity).bold() }
+                        }
+                        .disabled(busy || createMe.isEmpty)
+                    }
                     Section("加入队伍") {
                         TextField("队伍码", text: $codeInput)
                             .font(.title3.monospaced())
                             .textInputAutocapitalization(.characters).autocorrectionDisabled()
                         TextField("我的昵称", text: $nameInput)
-                        if !err.isEmpty { Text(err).font(.footnote).foregroundStyle(.red) }
                         Button {
                             join()
                         } label: {
@@ -142,11 +169,40 @@ struct TeamScreen: View {
                         }
                         .disabled(busy || codeInput.isEmpty || nameInput.isEmpty)
                     }
-                    Text("和安卓端队友输入同一队伍码即可互见位置、实时对讲")
+                    Text("创建队伍后把队伍码告诉队友；和安卓端输入同一队伍码即可互见位置、实时对讲")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("队伍")
+            .onAppear {
+                Task {
+                    await team.refreshOwner()
+                    if !team.inTeam { await MainActor.run { createMe = team.myName; nameInput = team.myName } }
+                }
+            }
+            .confirmationDialog("转让队长", isPresented: $showTransfer, titleVisibility: .visible) {
+                ForEach(team.members.filter { $0.pid != team.pid }) { m in
+                    Button("转让给 \(m.name)") {
+                        Task { try? await team.transfer(to: m.pid) }
+                    }
+                }
+                Button("取消", role: .cancel) { }
+            } message: {
+                Text("选择一位队员接任队长")
+            }
+        }
+    }
+
+    private func create() {
+        busy = true
+        err = ""
+        Task {
+            do {
+                try await team.createTeam(name: createName, me: createMe)
+            } catch {
+                err = error.localizedDescription
+            }
+            busy = false
         }
     }
 

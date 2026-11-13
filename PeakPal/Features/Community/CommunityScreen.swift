@@ -223,6 +223,16 @@ struct PostDetailView: View {
                           systemImage: liked ? "hand.thumbsup.fill" : "hand.thumbsup")
                 }
                 .buttonStyle(.bordered)
+                if post.uid > 0 {
+                    NavigationLink {
+                        ChatScreen(peer: ConversationsScreen.Conv(
+                            uid: post.uid, username: "", nickname: post.author,
+                            lastText: "", lastKind: "text", lastCreated: 0, unread: 0))
+                    } label: {
+                        Label("发私信", systemImage: "ellipsis.message.fill")
+                    }
+                    .buttonStyle(.bordered)
+                }
             } header: { Text("支持") }
             Section("\(comments.count) 条评论") {
                 ForEach(comments) { c in

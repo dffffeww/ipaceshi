@@ -50,6 +50,8 @@ struct RootTabView: View {
                 .tabItem { Label("队伍", systemImage: "person.3.fill") }
             CommunityScreen()
                 .tabItem { Label("社区", systemImage: "message.circle.fill") }
+            MessagesRootScreen()
+                .tabItem { Label("消息", systemImage: "ellipsis.message.fill") }
             MeScreen()
                 .tabItem { Label("我的", systemImage: "person.crop.circle.fill") }
         }
