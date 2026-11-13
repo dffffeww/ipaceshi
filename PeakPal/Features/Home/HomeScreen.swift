@@ -231,7 +231,7 @@ struct HomeScreen: View {
                                     .background(Color.orange.opacity(0.8), in: Circle())
                                 Text(p.author).font(.caption).foregroundStyle(.secondary)
                                 Spacer()
-                                Text(CommunityClient.post(p.time)).font(.caption2).foregroundStyle(.secondary)
+                                Text(TimeFmt.post(p.time)).font(.caption2).foregroundStyle(.secondary)
                             }
                             Text(p.title).font(.subheadline.weight(.medium))
                                 .foregroundStyle(.primary)

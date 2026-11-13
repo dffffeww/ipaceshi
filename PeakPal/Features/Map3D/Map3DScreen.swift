@@ -201,12 +201,6 @@ final class Map3DViewModel: NSObject, ObservableObject {
 
     // MARK: - 记录实时线（对应安卓 LiveOverlay：收 ACTION_POINT 逐点追加）
 
-    private final class LiveLineAnnotation: MLNPolyline {}
-    private final class SelfDotAnnotation: MLNPointAnnotation {}
-    private final class ToiletAnnotation: MLNPointAnnotation {
-        var name = ""
-    }
-
     func updateLiveLine() {
         guard let map = mapView else { return }
         clearLiveLine()
@@ -508,3 +502,14 @@ struct Map3DContainer: UIViewRepresentable {
 final class TeamMemberAnnotation: MLNPointAnnotation {
     var member: TeamState.Member?
 }
+
+/// 我的位置点（高德系底图时替代原生蓝点）
+final class SelfDotAnnotation: MLNPointAnnotation {}
+
+/// 轨迹沿线卫生间
+final class ToiletAnnotation: MLNPointAnnotation {
+    var name = ""
+}
+
+/// 记录中的实时轨迹线（与历史轨迹线类型区分，便于独立清理）
+final class LiveLineAnnotation: MLNPolyline {}
