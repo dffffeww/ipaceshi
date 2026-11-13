@@ -115,11 +115,11 @@ public enum Map3DStyle {
         let ex = exag()
         let bm = basemap()
         // 热力图层（足迹热力：开关打开且有本地轨迹点时才生成）
-        var heat = ""
+        var heatLayer = ""
         if heat() {
             let data = heatData()
             if !data.contains("\"features\":[]") {
-                heat = """
+                heatLayer = """
                 ,"heat_src":{"type":"geojson","data":\(data)}
                 ,"heat":{"type":"heatmap","source":"heat_src","paint":{
                 "heatmap-weight":1,"heatmap-intensity":1,"heatmap-radius":18,"heatmap-opacity":0.72,
@@ -138,7 +138,7 @@ public enum Map3DStyle {
         "amaproads":{"type":"raster","tiles":\(amapSatTiles(style: "8")),"tileSize":256,"maxzoom":18},
         "osm":{"type":"raster","tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],"tileSize":256,"maxzoom":19},
         "dem":{"type":"raster-dem","tiles":["\(awsDem)"],"encoding":"terrarium","tileSize":256,"maxzoom":14}
-        \(heat)},
+        \(heatLayer)},
         "layers":[
         {"id":"bg","type":"background","paint":{"background-color":"#10160f"}},
         {"id":"img","type":"raster","source":"img","layout":{"visibility":"\(vis(bm == 0))"}},
