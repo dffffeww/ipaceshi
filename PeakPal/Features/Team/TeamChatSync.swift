@@ -12,7 +12,7 @@ public final class TeamChatSync: ObservableObject {
 
     public static let shared = TeamChatSync()
 
-    struct VoiceCapsule: Equatable { let from: String; let talk: Bool }
+    public struct VoiceCapsule: Equatable { public let from: String; public let talk: Bool }
 
     /// 顶部波纹胶囊（对应安卓 VoiceTopBar）：有人对讲/发语音时滑入
     @Published public private(set) var capsule: VoiceCapsule?

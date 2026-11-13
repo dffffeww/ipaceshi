@@ -347,7 +347,7 @@ public enum TrackImport {
             } else if root == "kml" {
                 if tag == "Placemark" && d == pmDepth {
                     if pmHasCoord {
-                        let w = Wpt()
+                        var w = Wpt()
                         w.name = pmName; w.desc = pmDesc
                         w.lat = pmLat; w.lng = pmLng; w.alt = pmAlt
                         if w.lat >= -90 && w.lat <= 90 && w.lng >= -180 && w.lng <= 180 && !(w.lat == 0 && w.lng == 0) {

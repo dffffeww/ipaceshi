@@ -307,7 +307,7 @@ public final class TalkPlayer: ObservableObject {
                         while filled < ioPackets.pointee && ctxPtr.pointee.idx < ctxPtr.pointee.frames.count {
                             let f = ctxPtr.pointee.frames[ctxPtr.pointee.idx]
                             let n = f.count
-                            guard byteOff + n <= bufCapacity else { break }
+                            guard Int(byteOff) + n <= bufCapacity else { break }
                             f.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
                                 memcpy(ioData.pointee.mBuffers.mData! + Int(byteOff), raw.baseAddress!, n)
                             }

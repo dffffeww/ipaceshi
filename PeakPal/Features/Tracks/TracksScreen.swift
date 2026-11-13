@@ -1,5 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import MapLibre
+import UIKit
 
 /// 轨迹页（对应安卓 TracksFragment + TrackDetailActivity）：
 /// 列表（本地 SQLite）+ 搜索（本地 + 平台路线库 pubtracks 直连，与安卓 v7.8/v7.69 同款）
