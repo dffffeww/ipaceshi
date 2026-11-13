@@ -4,6 +4,28 @@ import SwiftUI
 /// 服务器固定为云端生产服务器（与安卓同一套后端），页面上不显示地址
 struct MeScreen: View {
     @EnvironmentObject var session: Session
+    @State private var checking = false
+    @State private var updateInfo: UpdateChecker.Info?
+    @State private var showUpdate = false
+    @State private var upToDate = false
+
+    /// 手动检查更新：有新版弹更新框；已最新/无网络给行内提示
+    private func checkUpdate() {
+        checking = true
+        Task {
+            let info = await UpdateChecker.fetchLatest(session: session)
+            await MainActor.run {
+                checking = false
+                if let info {
+                    updateInfo = info
+                    if UpdateChecker.newerAvailable(info) { showUpdate = true }
+                    else { upToDate = true }
+                } else {
+                    upToDate = true
+                }
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -27,6 +49,21 @@ struct MeScreen: View {
                     Text("影像源：\(Map3DStyle.tdtReady ? "天地图影像" : "Esri World Imagery")")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Section("版本") {
+                    HStack {
+                        Text("当前版本").foregroundStyle(.secondary)
+                        Spacer()
+                        Text("v\(UpdateChecker.currentVersion) (build \(UpdateChecker.currentBuild))")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Button {
+                        checkUpdate()
+                    } label: {
+                        if checking { ProgressView().frame(maxWidth: .infinity) }
+                        else { Label("检查更新", systemImage: "arrow.triangle.2.circlepath") }
+                    }
+                    .disabled(checking)
+                }
                 Section {
                     Button(role: .destructive) {
                         session.logout()
@@ -34,6 +71,19 @@ struct MeScreen: View {
                 }
             }
             .navigationTitle("我的")
+            .alert("发现新版本 \(updateInfo?.version ?? "")（build \(updateInfo?.code ?? 0)）",
+                   isPresented: $showUpdate, presenting: updateInfo) { info in
+                Button("复制下载链接") { _ = UpdateChecker.copyLink(info.url) }
+                Button("打开下载页") { UpdateChecker.openDownload(info.url) }
+                Button("以后再说", role: .cancel) {}
+            } message: { info in
+                Text("当前 build \(UpdateChecker.currentBuild)。请把链接粘到电脑浏览器下载新 ipa，再用爱思助手重新签名安装。\n\n\(info.notes)")
+            }
+            .alert("已是最新版本", isPresented: $upToDate) {
+                Button("好的", role: .cancel) {}
+            } message: {
+                Text(updateInfo == nil ? "暂时无法连接服务器，请稍后再试" : "当前已是服务器发布的最新版本")
+            }
         }
     }
 }

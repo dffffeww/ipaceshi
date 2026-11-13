@@ -36,6 +36,10 @@ struct PeakPalApp: App {
 
 /// 主框架：地图 / 轨迹 / 队伍 / 社区 / 我的（对应安卓底部导航）
 struct RootTabView: View {
+    @State private var updateInfo: UpdateChecker.Info?
+    @State private var showUpdate = false
+    @State private var linkCopied = false
+
     var body: some View {
         TabView {
             Map3DScreen()
@@ -52,6 +56,24 @@ struct RootTabView: View {
         .onAppear {
             // 上报上次崩溃日志（对应安卓 MainActivity 冷启动上报，网络不可用保留下次再试）
             CrashGuard.reportPending()
+            // 启动后 3 秒检查 iOS 新版本（不阻塞首屏；本机构建号低于服务器即提示）
+            Task {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if let info = await UpdateChecker.fetchLatest(session: Session.shared),
+                   UpdateChecker.newerAvailable(info) {
+                    await MainActor.run { updateInfo = info; showUpdate = true }
+                }
+            }
+        }
+        .alert("发现新版本 \(updateInfo?.version ?? "")（build \(updateInfo?.code ?? 0)）",
+               isPresented: $showUpdate, presenting: updateInfo) { info in
+            Button("复制下载链接") {
+                linkCopied = UpdateChecker.copyLink(info.url)
+            }
+            Button("打开下载页") { UpdateChecker.openDownload(info.url) }
+            Button("以后再说", role: .cancel) {}
+        } message: { info in
+            Text("当前 build \(UpdateChecker.currentBuild)。iOS 无法静默更新：请把链接粘到电脑浏览器下载新 ipa，再用爱思助手重新签名安装。\n\n\(info.notes)")
         }
     }
 }
