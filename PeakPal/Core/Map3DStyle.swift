@@ -44,6 +44,33 @@ public enum Map3DStyle {
 
     public static func setBasemap(_ v: Int) { prefs.set(v, forKey: "basemap") }
 
+    // MARK: - 足迹热力图（对应安卓足迹热力：所有本地轨迹点叠加热力渲染）
+
+    public static func heat() -> Bool { prefs.bool(forKey: "heat") }
+    public static func setHeat(_ on: Bool) { prefs.set(on, forKey: "heat") }
+
+    /// 全部本地轨迹抽稀 → GeoJSON FeatureCollection（高德系底图时逐点 wgs2gcj）
+    static func heatData() -> String {
+        var pts: [(Double, Double)] = []
+        let gcj = needsGcj()
+        for t in Db.shared.listTracks().prefix(30) {
+            var p = Db.shared.loadPts(tid: t.id)
+            if p.count > 400 {
+                let step = p.count / 400 + 1
+                p = p.enumerated().compactMap { ($0.offset % step == 0 || $0.offset == p.count - 1) ? $0.element : nil }
+            }
+            for q in p {
+                if gcj { let g = Coord.wgs2gcj(lat: q.lat, lng: q.lng); pts.append(g) }
+                else { pts.append((q.lat, q.lng)) }
+            }
+        }
+        guard !pts.isEmpty else { return "{\"type\":\"FeatureCollection\",\"features\":[]}" }
+        let feats = pts.map {
+            "{\"type\":\"Feature\",\"geometry\":{\"type\":\"Point\",\"coordinates\":[\($0.1),\($0.0)]}}"
+        }
+        return "{\"type\":\"FeatureCollection\",\"features\":[\(feats.joined(separator: ","))]}"
+    }
+
     /// 当前底图是否为 GCJ-02（高德系）→ 覆盖物/定位需 wgs2gcj 纠偏
     public static func needsGcj() -> Bool {
         let v = basemap()
@@ -81,12 +108,27 @@ public enum Map3DStyle {
     /// 可见性快捷写法
     static func vis(_ on: Bool) -> String { on ? "visible" : "none" }
 
-    /// 生成 MapLibre style JSON（与安卓端同一数据源、同一图层结构 + 底图切换）
+    /// 生成 MapLibre style JSON（与安卓端同一数据源、同一图层结构 + 底图切换 + 热力图）
     public static func json() -> String {
         let imgMax = tdtReady ? "17" : "18"
         let img = tdtReady ? tilesJson() : "[\"\(esriImg)\"]"
         let ex = exag()
         let bm = basemap()
+        // 热力图层（足迹热力：开关打开且有本地轨迹点时才生成）
+        var heat = ""
+        if heat() {
+            let data = heatData()
+            if !data.contains("\"features\":[]") {
+                heat = """
+                ,"heat_src":{"type":"geojson","data":\(data)}
+                ,"heat":{"type":"heatmap","source":"heat_src","paint":{
+                "heatmap-weight":1,"heatmap-intensity":1,"heatmap-radius":18,"heatmap-opacity":0.72,
+                "heatmap-color":["interpolate",["linear"],["heatmap-density"],0,"rgba(0,0,0,0)",
+                0.2,"rgba(0,255,80,0.35)",0.4,"rgba(255,230,0,0.55)",0.6,"rgba(255,140,0,0.72)",
+                0.8,"rgba(255,40,40,0.85)",1,"rgba(180,0,0,1)"]}}
+                """
+            }
+        }
         return """
         {"version":8,
         "sources":{
@@ -96,7 +138,7 @@ public enum Map3DStyle {
         "amaproads":{"type":"raster","tiles":\(amapSatTiles(style: "8")),"tileSize":256,"maxzoom":18},
         "osm":{"type":"raster","tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],"tileSize":256,"maxzoom":19},
         "dem":{"type":"raster-dem","tiles":["\(awsDem)"],"encoding":"terrarium","tileSize":256,"maxzoom":14}
-        },
+        \(heat)},
         "layers":[
         {"id":"bg","type":"background","paint":{"background-color":"#10160f"}},
         {"id":"img","type":"raster","source":"img","layout":{"visibility":"\(vis(bm == 0))"}},

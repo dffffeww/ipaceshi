@@ -300,6 +300,13 @@ public final class CommunityClient {
 // MARK: - 时间格式化（对应安卓 TimeFmt：今天 HH:mm / 昨天 HH:mm / MM-dd / yyyy-MM-dd）
 
 public enum TimeFmt {
+
+    /// HH:mm:ss（地图页定位卡刷新时间）
+    public static func clock(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f.string(from: date)
+    }
     public static func post(_ ts: Int64) -> String {
         guard ts > 0 else { return "" }
         let date = Date(timeIntervalSince1970: Double(ts) / (ts > 10_000_000_000 ? 1000.0 : 1.0))

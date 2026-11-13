@@ -12,9 +12,8 @@ struct RecordScreen: View {
     @State private var name = ""
     @State private var askStop = false
     @State private var saved = false
-    // 每公里播报（对应安卓 TtsKit：里程里程碑触发）
+    // 每公里播报（对应安卓 TtsKit：里程里程碑触发，音色/语速走声音设置）
     @State private var announcedKm = 0
-    private let tts = AVSpeechSynthesizer()
 
     var body: some View {
         NavigationStack {
@@ -42,10 +41,7 @@ struct RecordScreen: View {
         announcedKm = km
         let dur = TrackMath.fmtDuration(loc.elapsedMs())
         let asc = Int(loc.liveAscent)
-        let utter = AVSpeechUtterance(string: "已完成\(km)公里，用时\(dur)，累计爬升\(asc)米，加油！")
-        utter.voice = AVSpeechSynthesisVoice(language: "zh-CN")
-        utter.rate = 0.5
-        tts.speak(utter)
+        TtsKit.speak("已完成\(km)公里，用时\(dur)，累计爬升\(asc)米，加油！")
     }
 
     // MARK: - 未记录：开始页

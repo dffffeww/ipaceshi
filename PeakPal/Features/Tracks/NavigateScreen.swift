@@ -58,8 +58,6 @@ public final class NavigateEngine: NSObject, ObservableObject {
     private var altitudeBase: Double?
     private var lastLocation: CLLocation?
 
-    private let tts = AVSpeechSynthesizer()
-
     public init(track: Track, pts: [TrackPt]) {
         self.trackId = track.id
         self.track = pts
@@ -353,10 +351,7 @@ public final class NavigateEngine: NSObject, ObservableObject {
     private func speak(_ text: String) {
         guard !text.isEmpty else { return }
         lastSpeak = Date().timeIntervalSince1970
-        let u = AVSpeechUtterance(string: text)
-        u.voice = AVSpeechSynthesisVoice(language: "zh-CN")
-        u.rate = 0.5
-        tts.speak(u)
+        TtsKit.speak(text)   // 音色/语速走「声音设置」
     }
 
     private func vibrate() {

@@ -14,82 +14,29 @@ import UIKit
 struct Map3DScreen: View {
     @StateObject private var vm = Map3DViewModel()
     @State private var showExagPicker = false
-    @State private var showPoiForm = false
+    @State private var showSos = false
+    @State private var showTeamChat = false
 
     var body: some View {
         ZStack {
             Map3DContainer(vm: vm).ignoresSafeArea()
 
-            VStack {
-                HStack {
+            VStack(spacing: 0) {
+                HStack(alignment: .top) {
+                    MapLocCard(vm: vm)          // 左上：定位/坐标系/比例尺信息卡
                     Spacer()
-                    VStack(spacing: 12) {
-                        Button { vm.recenter() } label: {
-                            Image(systemName: "location.fill").mapBtn()
-                        }
-                        // 底图切换（对应安卓 map_layer：循环 影像→高德标准→高德卫星→OSM）
-                        Button { vm.cycleBasemap() } label: {
-                            Image(systemName: "square.3.layers.3d").mapBtn()
-                        }
-                        Button { showExagPicker = true } label: {
-                            Image(systemName: "mountain.2.fill").mapBtn()
-                        }
-                        Button { vm.toggleTrack() } label: {
-                            Image(systemName: vm.trackOn ? "line.diagonal.fill" : "line.diagonal")
-                                .mapBtn()
-                        }
-                        // 标注点图层开关（对应安卓 POI overlay）
-                        Button { vm.togglePois() } label: {
-                            Image(systemName: vm.poisOn ? "mappin.circle.fill" : "mappin.circle")
-                                .mapBtn()
-                        }
-                        // 队友实时位置图层开关（对应安卓 TeamOverlay）
-                        if TeamState.shared.inTeam {
-                            Button { vm.toggleTeam() } label: {
-                                Image(systemName: vm.teamOn ? "person.3.fill" : "person.3")
-                                    .mapBtn()
-                            }
-                        }
-                    }
-                    .padding(.trailing, 12)
+                    rightButtons                // 右侧：SOS/标注/功能/地图/热力/队伍/3D/定位
                 }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
                 Spacer()
-                // 选中标注点管理卡（点标记弹出，可删除）
-                if let sel = vm.selectedPoi {
-                    HStack(spacing: 10) {
-                        Image(systemName: "mappin.and.ellipse").foregroundStyle(.orange)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(Poi.typeName(sel.type)) · \(sel.name.isEmpty ? "未命名" : sel.name)")
-                                .font(.subheadline.weight(.semibold))
-                            if !sel.note.isEmpty {
-                                Text(sel.note).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        }
-                        Spacer()
-                        Button(role: .destructive) {
-                            Db.shared.deletePoi(id: sel.id)
-                            vm.selectedPoi = nil
-                            vm.loadPois()
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        Button { vm.selectedPoi = nil } label: {
-                            Image(systemName: "xmark")
-                        }
-                    }
-                    .padding(12)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
+                HStack(alignment: .bottom) {
+                    zoomControls                // 左下：缩放 ±
+                    Spacer()
                 }
-                // 底部信息条：海拔探针 / 队友点选信息条 / 底图名（6 秒保持）
-                if vm.selectedPoi == nil, !vm.probeText.isEmpty {
-                    Text(vm.probeText)
-                        .font(.footnote.monospacedDigit())
-                        .padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(.thinMaterial, in: Capsule())
-                        .padding(.bottom, 24)
-                }
+                .padding(.leading, 12)
+                .padding(.bottom, 8)
+                bottomCards                     // 标注管理卡 / 底部信息条
             }
         }
         .confirmationDialog("地形夸张", isPresented: $showExagPicker, titleVisibility: .visible) {
@@ -106,8 +53,137 @@ struct Map3DScreen: View {
                 vm.loadPois()
             }
         }
+        .sheet(isPresented: $showSos) { GuardScreen() }
+        .sheet(isPresented: $showTeamChat) { TeamChatScreen() }
         .onAppear { vm.activate() }
         .onDisappear { vm.deactivate() }
+    }
+
+    // MARK: - 右侧按钮组（对齐安卓地图页右列：SOS/标注/功能/地图/队伍/对讲/定位/回中）
+
+    private var rightButtons: some View {
+        VStack(spacing: 10) {
+            Button { showSos = true } label: {
+                Text("SOS").font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(12).background(Color.red, in: Circle())
+            }
+            Button { vm.togglePois() } label: {
+                Image(systemName: vm.poisOn ? "mappin.circle.fill" : "mappin.circle").mapBtn()
+            }
+            Button { showExagPicker = true } label: {
+                Image(systemName: "mountain.2.fill").mapBtn()
+            }
+            Button { vm.cycleBasemap() } label: {
+                Image(systemName: "square.3.layers.3d").mapBtn()
+            }
+            Button { vm.toggleHeat() } label: {
+                Image(systemName: vm.heatOn ? "flame.fill" : "flame").mapBtn()
+            }
+            Button { vm.toggleTrack() } label: {
+                Image(systemName: vm.trackOn ? "line.diagonal.fill" : "line.diagonal").mapBtn()
+            }
+            if TeamState.shared.inTeam {
+                Button { vm.toggleTeam() } label: {
+                    Image(systemName: vm.teamOn ? "person.3.fill" : "person.3").mapBtn()
+                }
+                Button { showTeamChat = true } label: {
+                    Image(systemName: "message.fill").mapBtn()
+                }
+            }
+            // 3D/2D 视角切换（对应安卓 2D/3D 模式）
+            Button { vm.toggle3D() } label: {
+                Image(systemName: vm.is3D ? "cube.transparent.fill" : "square.split.2x1").mapBtn()
+            }
+            Button { vm.recenter() } label: {
+                Image(systemName: "location.fill").mapBtn()
+            }
+        }
+    }
+
+    // MARK: - 左下缩放控件（对应安卓 ±16.0）
+
+    private var zoomControls: some View {
+        VStack(spacing: 8) {
+            Button { vm.zoom(by: 1) } label: { Text("+").mapTextBtn() }
+            Text(String(format: "%.1f", vm.locInfo.zoom))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 4)
+                .frame(minWidth: 36, minHeight: 20)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 6))
+            Button { vm.zoom(by: -1) } label: { Text("−").mapTextBtn() }
+        }
+    }
+
+    // MARK: - 底部卡片（选中标注管理 / 信息条）
+
+    @ViewBuilder
+    private var bottomCards: some View {
+        // 选中标注点管理卡（点标记弹出，可删除）
+        if let sel = vm.selectedPoi {
+            HStack(spacing: 10) {
+                Image(systemName: "mappin.and.ellipse").foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(Poi.typeName(sel.type)) · \(sel.name.isEmpty ? "未命名" : sel.name)")
+                        .font(.subheadline.weight(.semibold))
+                    if !sel.note.isEmpty {
+                        Text(sel.note).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                Spacer()
+                Button(role: .destructive) {
+                    Db.shared.deletePoi(id: sel.id)
+                    vm.selectedPoi = nil
+                    vm.loadPois()
+                } label: {
+                    Image(systemName: "trash")
+                }
+                Button { vm.selectedPoi = nil } label: {
+                    Image(systemName: "xmark")
+                }
+            }
+            .padding(12)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        }
+        // 底部信息条：海拔探针 / 队友点选信息条 / 底图名（6 秒保持）
+        if vm.selectedPoi == nil, !vm.probeText.isEmpty {
+            Text(vm.probeText)
+                .font(.footnote.monospacedDigit())
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(.thinMaterial, in: Capsule())
+                .padding(.bottom, 24)
+        }
+    }
+}
+
+/// 左上定位信息卡（对齐安卓地图页定位卡：坐标系/精度/速度/比例尺/队伍/标注/轨迹）
+struct MapLocCard: View {
+    @ObservedObject var vm: Map3DViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(vm.locInfo.line1).font(.system(size: 11, weight: .semibold))
+            Text(vm.locInfo.line2).font(.system(size: 10).monospacedDigit())
+            Text(vm.locInfo.line3).font(.system(size: 10).monospacedDigit())
+            Text(vm.locInfo.line4).font(.system(size: 10).monospacedDigit())
+            Text(vm.locInfo.line5).font(.system(size: 10).monospacedDigit())
+        }
+        .foregroundStyle(Color.green)
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: 280, alignment: .leading)
+    }
+}
+
+extension Text {
+    func mapTextBtn() -> some View {
+        font(.title3.weight(.semibold))
+            .foregroundStyle(.white)
+            .frame(width: 40, height: 40)
+            .background(.thinMaterial, in: Circle())
     }
 }
 
@@ -189,6 +265,44 @@ final class Map3DViewModel: NSObject, ObservableObject {
     @Published var poisOn = true        // 标注点图层默认开
     @Published var selectedPoi: Poi?    // 点选的标注点（底部管理卡）
     @Published var poiDraft: PoiDraft?  // 非空时弹添加表单
+    @Published var is3D: Bool           // 3D/2D 视角（记忆）
+    @Published var heatOn: Bool         // 足迹热力图（记忆）
+    @Published var locInfo = LocInfo()  // 左上定位信息卡
+
+    /// 定位信息卡（对齐安卓地图页定位卡字段）
+    struct LocInfo {
+        var source = "定位中"
+        var acc: Double = -1
+        var wgs: (Double, Double) = (0, 0)
+        var gcj: (Double, Double) = (0, 0)
+        var alt = 0.0
+        var speed = 0.0
+        var zoom: Double = 0
+        var mpp = 0.0
+        var teamTotal = 0
+        var teamOnline = 0
+        var poiCount = 0
+        var trackCount = 0
+        var syncedAt = ""
+
+        var line1: String {
+            let s = acc >= 0 ? String(format: "精度±%.0fm", acc) : "等待定位"
+            return "\(source) · \(s) · \(syncedAt)"
+        }
+        var line2: String {
+            String(format: "WGS84 %.6f, %.6f", wgs.0, wgs.1)
+        }
+        var line3: String {
+            String(format: "GCJ02 %.6f, %.6f", gcj.0, gcj.1)
+        }
+        var line4: String {
+            String(format: "海拔%.0fm · 速度%.1fm/s · 缩放%.1f · 1px=%.1fm", alt, speed, zoom, mpp)
+        }
+        var line5: String {
+            let t = teamTotal > 0 ? " · 队伍\(teamTotal)人(在线\(teamOnline))" : ""
+            return "标注\(poiCount)个\(t) · 轨迹\(trackCount)条 · 长按加点"
+        }
+    }
 
     /// 长按落点（WGS84），作为 Identifiable 供 sheet(item:)
     struct PoiDraft: Identifiable {
@@ -202,8 +316,12 @@ final class Map3DViewModel: NSObject, ObservableObject {
     private var teamSub: AnyCancellable?
     private var locSub: AnyCancellable?
     private var ptsSub: AnyCancellable?
+    private var cardTimer: Timer?            // 信息卡 1s 刷新（缩放/比例尺随地图变化）
+    private var cardTick = 0
 
     override init() {
+        is3D = UserDefaults(suiteName: "map3d")?.object(forKey: "is3d") as? Bool ?? true
+        heatOn = Map3DStyle.heat()
         super.init()
         // 成员快照每轮同步 → 自动重绘队友图层（对应安卓 TeamService 广播 ACTION_MEMBERS）
         teamSub = TeamState.shared.$membersTick
@@ -222,8 +340,85 @@ final class Map3DViewModel: NSObject, ObservableObject {
         probeText = ""
         // 新版底图记忆恢复后重绘覆盖物（GCJ 状态可能变化）
         redrawOverlays()
+        // 信息卡每秒刷新（重量级统计每 5 秒一次，避免每秒扫库）
+        cardTimer?.invalidate()
+        cardTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.updateCard(heavy: false) }
+        }
+        updateCard(heavy: true)
     }
-    func deactivate() {}
+    func deactivate() {
+        cardTimer?.invalidate()
+        cardTimer = nil
+    }
+
+    // MARK: - 3D/2D 视角切换 + 缩放
+
+    /// 3D↔2D：保持中心/朝向，俯仰 55°↔0°（记忆）
+    func toggle3D() {
+        guard let map = mapView else { return }
+        is3D.toggle()
+        UserDefaults(suiteName: "map3d")?.set(is3D, forKey: "is3d")
+        map.camera = MLNMapCamera(lookingAtCenter: map.centerCoordinate,
+                                  fromDistance: map.camera.altitude,
+                                  pitch: is3D ? 55 : 0,
+                                  heading: map.camera.heading)
+        probeText = is3D ? "3D 视角（双指拖动调整俯仰）" : "2D 平面视角"
+        probeHoldUntil = Date().addingTimeInterval(3)
+    }
+
+    /// 缩放 ±1（飞行动画；对应安卓 ± 按钮）
+    func zoom(by delta: Int) {
+        guard let map = mapView else { return }
+        let cam = MLNMapCamera(lookingAtCenter: map.centerCoordinate,
+                               fromDistance: map.camera.altitude * (delta > 0 ? 0.5 : 2.0),
+                               pitch: map.camera.pitch, heading: map.camera.heading)
+        map.fly(to: cam, withDuration: 0.3)
+        updateCard(heavy: false)
+    }
+
+    // MARK: - 足迹热力图（对应安卓足迹热力）
+
+    func toggleHeat() {
+        heatOn.toggle()
+        Map3DStyle.setHeat(heatOn)
+        reloadStyle()
+        probeText = heatOn ? "足迹热力图：开（全部本地轨迹）" : "足迹热力图：关"
+        probeHoldUntil = Date().addingTimeInterval(3)
+    }
+
+    // MARK: - 定位信息卡
+
+    /// heavy=false 只刷新坐标/缩放等轻量字段；heavy=true 加队伍/标注/轨迹统计（扫库）
+    func updateCard(heavy: Bool) {
+        guard let map = mapView else { return }
+        var li = locInfo
+        li.zoom = map.zoomLevel
+        li.mpp = 40075016.686 * cos(map.centerCoordinate.latitude * .pi / 180) / (256 * pow(2, map.zoomLevel))
+        if let loc = LocationKit.shared.lastLocation {
+            let c = loc.coordinate
+            li.source = loc.horizontalAccuracy <= 30 ? "定位：GPS" : "定位：网络"
+            li.acc = loc.horizontalAccuracy
+            li.wgs = (c.latitude, c.longitude)
+            li.gcj = Coord.wgs2gcj(lat: c.latitude, lng: c.longitude)
+            li.alt = loc.altitude
+            li.speed = max(0, loc.speed)
+            li.syncedAt = TimeFmt.clock(Date())
+        }
+        if heavy {
+            let ms = TeamState.shared.members
+            li.teamTotal = TeamState.shared.inTeam ? ms.count : 0
+            li.teamOnline = ms.filter { !$0.offline }.count
+            li.poiCount = Db.shared.allPois().count
+            li.trackCount = Db.shared.listTracks().count
+        } else {
+            li.teamTotal = locInfo.teamTotal
+            li.teamOnline = locInfo.teamOnline
+            li.poiCount = locInfo.poiCount
+            li.trackCount = locInfo.trackCount
+        }
+        locInfo = li
+    }
 
     func togglePois() {
         poisOn.toggle()
@@ -485,9 +680,9 @@ struct Map3DContainer: UIViewRepresentable {
         map.isPitchEnabled = true
         map.compassView.isHidden = false
         map.delegate = context.coordinator
-        // 默认视角：带俯仰的 3D 观感
+        // 默认视角：3D 记忆状态（is3D 开→俯仰 55°，关→2D 平面）
         map.camera = MLNMapCamera(lookingAtCenter: CLLocationCoordinate2D(latitude: 30.0, longitude: 102.0),
-                                  fromDistance: 8000, pitch: 55, heading: 0)
+                                  fromDistance: 8000, pitch: vm.is3D ? 55 : 0, heading: 0)
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.onTap(_:)))
         tap.delegate = context.coordinator
         map.addGestureRecognizer(tap)
