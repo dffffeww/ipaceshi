@@ -20,6 +20,8 @@ public final class Session: ObservableObject {
         }
     }
     @Published public var uid: String { didSet { d.set(uid, forKey: "uid") } }
+    /// 登录用户名（后端按 username 查库做续登，与数字 uid 分开存）
+    @Published public var uname: String { didSet { d.set(uname, forKey: "uname") } }
     @Published public var name: String { didSet { d.set(name, forKey: "name") } }
     @Published public var loggedIn: Bool { didSet { d.set(loggedIn, forKey: "loggedIn") } }
 
@@ -32,6 +34,7 @@ public final class Session: ObservableObject {
         server = svr
         token = Keychain.get("token") ?? ""
         uid = d.string(forKey: "uid") ?? ""
+        uname = d.string(forKey: "uname") ?? ""
         name = d.string(forKey: "name") ?? ""
         loggedIn = d.bool(forKey: "loggedIn")
         api = (try? ApiClient(address: svr)) ?? (try! ApiClient(address: "https://example.com"))
@@ -47,11 +50,15 @@ public final class Session: ObservableObject {
         return true
     }
 
-    /// 登录成功：保存会话并注入 token
+    /// 登录成功：保存会话并注入 token。
+    /// 后端返回：token(String)、uid(Int)、username、nickname——注意 uid 是数字，需转字符串
     public func saveLogin(_ res: [String: Any], server addr: String) {
         token = res["token"] as? String ?? ""
-        uid = res["uid"] as? String ?? ""
-        name = res["name"] as? String ?? ""
+        let u = res["uid"]
+        uid = (u as? NSNumber)?.stringValue ?? (u as? String) ?? ""
+        uname = res["username"] as? String ?? ""
+        let nick = res["nickname"] as? String ?? ""
+        name = nick.isEmpty ? uname : nick
         server = addr
         loggedIn = true
         api.setToken(token)
@@ -65,13 +72,14 @@ public final class Session: ObservableObject {
     }
 
     /// 401 同步续登：用保存的凭据重新登录（对应安卓 v7.55 ReloginHook）
+    /// 后端按 username 查库，必须用 uname（用户名），不能用数字 uid
     public func relogin() -> String? {
-        guard let pwd = Keychain.get("pwd"), !uid.isEmpty else { return nil }
+        guard let pwd = Keychain.get("pwd"), !uname.isEmpty else { return nil }
         guard let client = try? ApiClient(address: server) else { return nil }
         var res: [String: Any]?
         let sem = DispatchSemaphore(value: 0)
         Task {
-            res = try? await client.request("POST", "login", body: ["uid": uid, "pwd": pwd])
+            res = try? await client.request("POST", "login", body: ["username": uname, "password": pwd])
             sem.signal()
         }
         sem.wait()

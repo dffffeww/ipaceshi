@@ -1,10 +1,9 @@
 import SwiftUI
 
-/// 我的页（对应安卓 MeFragment 精简版）：账号信息、服务器设置、退出登录
+/// 我的页（对应安卓 MeFragment 精简版）：账号信息、3D 地图设置、退出登录。
+/// 服务器固定为云端生产服务器（与安卓同一套后端），页面上不显示地址
 struct MeScreen: View {
     @EnvironmentObject var session: Session
-    @State private var serverInput = ""
-    @State private var err = ""
 
     var body: some View {
         NavigationStack {
@@ -18,15 +17,6 @@ struct MeScreen: View {
                             Text("UID: \(session.uid)").font(.caption).foregroundStyle(.secondary)
                         }
                     }
-                }
-                Section("服务器") {
-                    TextField("服务器地址", text: $serverInput)
-                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button("重新连接") {
-                        err = session.reconnect(serverInput) ? "" : "请输入有效的HTTP(S)服务地址"
-                    }
-                    if !err.isEmpty { Text(err).font(.footnote).foregroundStyle(.red) }
-                    Text(session.server).font(.caption).foregroundStyle(.secondary)
                 }
                 Section("3D 地图") {
                     HStack {
@@ -44,7 +34,6 @@ struct MeScreen: View {
                 }
             }
             .navigationTitle("我的")
-            .onAppear { serverInput = session.server }
         }
     }
 }
