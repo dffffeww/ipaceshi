@@ -37,10 +37,13 @@ struct PeakPalApp: App {
 /// 主框架（新版布局，对齐安卓 MainActivity：5 槽位 + 中央凸起记录键）
 /// 首页 | 地图 | 记录(中央) | 发现 | 我的；消息从首页铃铛进入（与安卓 tab_msg 无槽位一致）
 struct RootTabView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var sel = 0
     @State private var updateInfo: UpdateChecker.Info?
     @State private var showUpdate = false
     @State private var linkCopied = false
+    /// 距上次检查的时间戳：前台轮询/回前台检查共用，保证至少间隔 60s，不刷接口
+    @State private var lastCheck: Date = .distantPast
 
     var body: some View {
         tabContent
@@ -51,12 +54,17 @@ struct RootTabView: View {
             // 上报上次崩溃日志（对应安卓 MainActivity 冷启动上报，网络不可用保留下次再试）
             CrashGuard.reportPending()
             // 启动后 3 秒检查 iOS 新版本（不阻塞首屏；本机构建号低于服务器即提示）
-            Task {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                if let info = await UpdateChecker.fetchLatest(session: Session.shared),
-                   UpdateChecker.newerAvailable(info) {
-                    await MainActor.run { updateInfo = info; showUpdate = true }
-                }
+            Task { await checkUpdate(initialDelay: true) }
+        }
+        // 回前台自动检查（对应安卓 Updater 60 秒轮询：期间服务器发新包即可送达）
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { Task { await checkUpdate() } }
+        }
+        .task {
+            // 前台常驻轮询：每 60 秒查一次（与安卓 POLL_INTERVAL_MS 对齐）
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                if scenePhase == .active { await checkUpdate() }
             }
         }
         .alert("发现新版本 \(updateInfo?.version ?? "")（build \(updateInfo?.code ?? 0)）",
@@ -69,6 +77,19 @@ struct RootTabView: View {
         } message: { info in
             Text("当前 build \(UpdateChecker.currentBuild)。iOS 无法静默更新：请把链接粘到电脑浏览器下载新 ipa，再用爱思助手重新签名安装。\n\n\(info.notes)")
         }
+    }
+
+    /// 更新检查入口：启动延迟 3s，其余立即；60s 内重复触发直接跳过
+    private func checkUpdate(initialDelay: Bool = false) async {
+        if initialDelay {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+        } else if Date().timeIntervalSince(lastCheck) < 60 {
+            return
+        }
+        await MainActor.run { lastCheck = Date() }
+        guard let info = await UpdateChecker.fetchLatest(session: Session.shared),
+              UpdateChecker.newerAvailable(info) else { return }
+        await MainActor.run { updateInfo = info; showUpdate = true }
     }
 
     @ViewBuilder
