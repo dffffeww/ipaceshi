@@ -512,11 +512,13 @@ struct GuardScreen: View {
             } footer: {
                 Text("与安卓端不同：iOS 后台常驻受系统限制，建议徒步时保持 App 在前台并开启记录")
             }
-            Section("紧急联系人（仅存本机）") {
+            Section {
                 TextField("手机号（用于紧急求救短信）", text: $guardianPhone)
                     .keyboardType(.phonePad)
+            } header: {
+                Text("紧急联系人（仅存本机）")
             }
-            Section("紧急求救") {
+            Section {
                 Button {
                     sendSOS()
                 } label: {
@@ -532,6 +534,8 @@ struct GuardScreen: View {
                 if loc.lastLocation == nil {
                     Text("尚未获得 GPS 定位，请先在地图页定位").font(.caption2).foregroundStyle(.orange)
                 }
+            } header: {
+                Text("紧急求救")
             } footer: {
                 Text("求救短信包含你的实时坐标 + 高德地图位置链接，收信人点击即可在地图上找到你。短信不会自动发出，需要你确认发送。")
             }
