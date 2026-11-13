@@ -462,12 +462,14 @@ struct ExpMedalScreen: View {
         guard CMPedometer.isStepCountingAvailable() else { return }
         let cal = Calendar.current
         let start = cal.startOfDay(for: Date())
-        do {
-            let data = try await pedometer.queryPedometerData(from: start, to: Date())
-            let steps = data?.numberOfSteps.intValue ?? 0
-            guard steps > 0 else { return }
-            _ = try? await session.api.request("POST", "exp/report", body: ["steps": steps])
-        } catch { }
+        let data: CMPedometerData? = await withCheckedContinuation { cont in
+            pedometer.queryPedometerData(from: start, to: Date()) { d, _ in
+                cont.resume(returning: d)
+            }
+        }
+        let steps = data?.numberOfSteps.intValue ?? 0
+        guard steps > 0 else { return }
+        _ = try? await session.api.request("POST", "exp/report", body: ["steps": steps])
     }
 
     private func claim(_ m: Medal) async {
@@ -477,6 +479,135 @@ struct ExpMedalScreen: View {
             await load()
         } catch {
             err = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - 安全守护 + 紧急求救（对应安卓 GuardActivity + GuardService 精简版）
+// 守护联系人存本地；紧急求救生成带坐标高德链接的短信草稿（iOS 系统限制：需手动点发送）
+
+import CoreLocation
+
+struct GuardScreen: View {
+    @EnvironmentObject var loc: LocationKit
+    @AppStorage("guard_phone") private var guardianPhone = ""
+    @State private var showSms = false
+    @State private var smsBody = ""
+
+    var body: some View {
+        List {
+            Section {
+                HStack {
+                    Image(systemName: "shield.lefthalf.filled")
+                        .font(.system(size: 28)).foregroundStyle(.green)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("安全守护").font(.headline)
+                        Text("打开爱徒步期间持续记录位置；位置只保存在本机，不会上传给任何人")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Text("守护模式")
+            } footer: {
+                Text("与安卓端不同：iOS 后台常驻受系统限制，建议徒步时保持 App 在前台并开启记录")
+            }
+            Section("紧急联系人（仅存本机）") {
+                TextField("手机号（用于紧急求救短信）", text: $guardianPhone)
+                    .keyboardType(.phonePad)
+            }
+            Section("紧急求救") {
+                Button {
+                    sendSOS()
+                } label: {
+                    HStack {
+                        Image(systemName: "sos")
+                        Text("发送紧急求救短信").bold()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                }
+                .tint(.red)
+                .disabled(loc.lastLocation == nil)
+                if loc.lastLocation == nil {
+                    Text("尚未获得 GPS 定位，请先在地图页定位").font(.caption2).foregroundStyle(.orange)
+                }
+            } footer: {
+                Text("求救短信包含你的实时坐标 + 高德地图位置链接，收信人点击即可在地图上找到你。短信不会自动发出，需要你确认发送。")
+            }
+        }
+        .navigationTitle("安全守护")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showSms) {
+            SosSmsSheet(smsText: smsBody, phone: guardianPhone)
+        }
+    }
+
+    private func sendSOS() {
+        guard let l = loc.lastLocation else { return }
+        let lat = l.coordinate.latitude
+        let lng = l.coordinate.longitude
+        let map = "https://uri.amap.com/marker?position=\(lng),\(lat)&name=我的位置"
+        var text = "【紧急求救】我在户外徒步需要帮助！我的位置（WGS84）：\(String(format: "%.5f, %.5f", lat, lng))\n点击查看地图：\(map)"
+        if l.horizontalAccuracy > 0 {
+            text += String(format: "\n定位精度约 %.0f 米，海拔 %.0f 米", l.horizontalAccuracy, l.altitude)
+        }
+        smsBody = text
+        showSms = true
+    }
+}
+
+/// 求救短信草稿（iOS 无法静默发短信：给出可复制的正文 + 一键打开短信）
+struct SosSmsSheet: View {
+    let smsText: String
+    let phone: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("求救短信内容").font(.headline)
+                Text(smsText)
+                    .font(.footnote.monospaced())
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 10))
+                    .textSelection(.enabled)
+                Button {
+                    UIPasteboard.general.string = smsText
+                    copied = true
+                } label: {
+                    Label(copied ? "已复制" : "复制内容", systemImage: "doc.on.doc")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    var urlStr = "sms:"
+                    if !phone.trimmingCharacters(in: .whitespaces).isEmpty {
+                        urlStr += "&to=\(phone.trimmingCharacters(in: .whitespaces))"
+                    }
+                    urlStr += "&body=\(smsText.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? smsText)"
+                    if let u = URL(string: urlStr) {
+                        UIApplication.shared.open(u)
+                    }
+                    dismiss()
+                } label: {
+                    Label("打开短信发送", systemImage: "message.fill")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("紧急求救")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
+            }
         }
     }
 }

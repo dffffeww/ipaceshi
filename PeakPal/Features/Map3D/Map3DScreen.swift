@@ -430,7 +430,7 @@ final class Map3DViewModel: NSObject, ObservableObject {
         clearPois()
         guard poisOn else { return }
         for p in Db.shared.allPois() {
-            let a = PoiAnnotation()
+            let a = MapPoiAnnotation()
             a.poi = p
             // 库里存 WGS84，按底图坐标系纠偏显示
             a.coordinate = disp(p.lat, p.lng)
@@ -440,7 +440,7 @@ final class Map3DViewModel: NSObject, ObservableObject {
 
     func clearPois() {
         guard let map = mapView else { return }
-        for a in (map.annotations ?? []) where a is PoiAnnotation { map.removeAnnotation(a) }
+        for a in (map.annotations ?? []) where a is MapPoiAnnotation { map.removeAnnotation(a) }
     }
 
     /// 长按地图：取点（还原 WGS84）后弹添加表单
@@ -582,7 +582,7 @@ struct Map3DContainer: UIViewRepresentable {
                 v.centerOffset = CGVector(dx: 0, dy: -10)
                 return v
             }
-            if let pa = annotation as? PoiAnnotation, let p = pa.poi {
+            if let pa = annotation as? MapPoiAnnotation, let p = pa.poi {
                 let id = "poi-\(p.type)"
                 let v = mapView.dequeueReusableAnnotationView(withIdentifier: id)
                     ?? MLNAnnotationView(annotation: annotation, reuseIdentifier: id)
@@ -668,7 +668,7 @@ struct Map3DContainer: UIViewRepresentable {
         }
 
         public func mapView(_ mapView: MLNMapView, didSelect annotation: MLNAnnotation) {
-            if let a = annotation as? PoiAnnotation, let p = a.poi {
+            if let a = annotation as? MapPoiAnnotation, let p = a.poi {
                 mapView.deselectAnnotation(a, animated: false)
                 Task { @MainActor [weak vm] in
                     vm?.selectedPoi = p
@@ -709,7 +709,7 @@ final class ToiletAnnotation: MLNPointAnnotation {
 }
 
 /// 地图标注点（途经点/水源/营地/山峰/危险，对应安卓 Poi overlay）
-final class PoiAnnotation: MLNPointAnnotation {
+final class MapPoiAnnotation: MLNPointAnnotation {
     var poi: Poi?
 }
 

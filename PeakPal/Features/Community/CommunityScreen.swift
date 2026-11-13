@@ -60,7 +60,7 @@ struct CommunityScreen: View {
                             Text(city.isEmpty ? "城市" : city)
                         }
                         .font(.caption)
-                        .foregroundStyle(city.isEmpty ? .secondary : .green)
+                        .foregroundStyle(city.isEmpty ? Color.secondary : Color.green)
                     }
                     if !city.isEmpty {
                         Button { city = ""; Task { await load() } } label: {

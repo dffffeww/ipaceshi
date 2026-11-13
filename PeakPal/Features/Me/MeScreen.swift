@@ -55,6 +55,9 @@ struct MeScreen: View {
                     NavigationLink { FollowListScreen() } label: {
                         Label("关注与粉丝", systemImage: "person.2")
                     }
+                    NavigationLink { GuardScreen() } label: {
+                        Label("安全守护与紧急求救", systemImage: "shield.lefthalf.filled")
+                    }
                     NavigationLink {
                         if supportUid > 0 {
                             ChatScreen(peer: ConversationsScreen.Conv(
