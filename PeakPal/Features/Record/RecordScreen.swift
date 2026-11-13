@@ -1,15 +1,20 @@
 import SwiftUI
+import AVFoundation
 
 /// 记录页（对应安卓 RecordFragment，中央凸起记录键进入）：
 /// - 未记录：轨迹名输入 + 大按钮开始（对应安卓 onToggle）
 /// - 记录中：大字里程 + 用时/爬升/均速 + 暂停/继续/结束 + GPS 状态
 /// - 暂停口径与安卓 TrackService 一致：休息时间不计用时、不采点
+/// - 每完成 1 公里 TTS 语音播报（对应安卓 TtsKit）
 /// - 结束自动入库（不弹表单，与安卓一致），可在「发现-轨迹库」上传云端
 struct RecordScreen: View {
     @EnvironmentObject var loc: LocationKit
     @State private var name = ""
     @State private var askStop = false
     @State private var saved = false
+    // 每公里播报（对应安卓 TtsKit：里程里程碑触发）
+    @State private var announcedKm = 0
+    private let tts = AVSpeechSynthesizer()
 
     var body: some View {
         NavigationStack {
@@ -22,7 +27,25 @@ struct RecordScreen: View {
             }
             .navigationTitle("记录")
             .navigationBarTitleDisplayMode(.inline)
+            .onReceive(loc.$tick) { _ in maybeAnnounceKm() }
+            .onChange(of: loc.recording) { started in
+                if started { announcedKm = 0 }
+            }
         }
+    }
+
+    /// 每完成 1 公里播报（暂停时不播；与安卓「已走 X 公里」口径一致）
+    private func maybeAnnounceKm() {
+        guard loc.recording, !loc.paused else { return }
+        let km = Int(loc.liveDistance / 1000)
+        guard km > announcedKm else { return }
+        announcedKm = km
+        let dur = TrackMath.fmtDuration(loc.elapsedMs())
+        let asc = Int(loc.liveAscent)
+        let utter = AVSpeechUtterance(string: "已完成\(km)公里，用时\(dur)，累计爬升\(asc)米，加油！")
+        utter.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+        utter.rate = 0.5
+        tts.speak(utter)
     }
 
     // MARK: - 未记录：开始页

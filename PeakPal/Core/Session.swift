@@ -23,6 +23,8 @@ public final class Session: ObservableObject {
     /// 登录用户名（后端按 username 查库做续登，与数字 uid 分开存）
     @Published public var uname: String { didSet { d.set(uname, forKey: "uname") } }
     @Published public var name: String { didSet { d.set(name, forKey: "name") } }
+    /// 头像：/img/xx 服务端路径 或 data: base64（空=无头像，UI 显示首字占位）
+    @Published public var avatar: String { didSet { d.set(avatar, forKey: "avatar") } }
     @Published public var loggedIn: Bool { didSet { d.set(loggedIn, forKey: "loggedIn") } }
 
     public private(set) var api: ApiClient
@@ -36,6 +38,7 @@ public final class Session: ObservableObject {
         uid = d.string(forKey: "uid") ?? ""
         uname = d.string(forKey: "uname") ?? ""
         name = d.string(forKey: "name") ?? ""
+        avatar = d.string(forKey: "avatar") ?? ""
         loggedIn = d.bool(forKey: "loggedIn")
         api = (try? ApiClient(address: svr)) ?? (try! ApiClient(address: "https://example.com"))
         api.setToken(token)
@@ -59,9 +62,24 @@ public final class Session: ObservableObject {
         uname = res["username"] as? String ?? ""
         let nick = res["nickname"] as? String ?? ""
         name = nick.isEmpty ? uname : nick
+        avatar = res["avatar"] as? String ?? avatar
         server = addr
         loggedIn = true
         api.setToken(token)
+    }
+
+    /// 拉取云端资料同步昵称/头像（对应安卓 MeFragment.profileSynced：进「我的」页时刷新）
+    public func syncProfile() async {
+        guard loggedIn, let myUid = Int(uid) else { return }
+        do {
+            let p = try await api.request("GET", "users/\(myUid)")
+            let nick = p["nickname"] as? String ?? ""
+            let av = p["avatar"] as? String ?? ""
+            await MainActor.run {
+                if !nick.isEmpty { name = nick }
+                avatar = av
+            }
+        } catch { }
     }
 
     /// 登出

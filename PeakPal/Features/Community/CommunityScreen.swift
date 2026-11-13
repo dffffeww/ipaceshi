@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import AVFoundation
+import PhotosUI
 
 /// 社区（对应安卓 HomeFragment 社区列表 + PostDetailActivity + CreatePostActivity 精简版）：
 /// 帖子列表（分类筛选/搜索/置顶）、帖子详情（点赞/评论/关注作者）、发帖（文本，图片/视频/结伴报名后续迭代）
@@ -11,6 +12,7 @@ struct CommunityScreen: View {
     @State private var loading = false
     @State private var err = ""
     @State private var showCreate = false
+    @State private var announcement: (title: String, content: String)?
 
     static let categories = ["全部", "综合", "线路攻略", "徒步笔记", "结伴同行", "装备交流"]
 
@@ -52,6 +54,22 @@ struct CommunityScreen: View {
                 .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 10))
                 .padding(.horizontal, 12).padding(.bottom, 6)
 
+                // 官方公告（对应安卓 HomeFragment announcement 横幅）
+                if let a = announcement {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "speaker.wave.2.fill")
+                                .font(.caption2).foregroundStyle(.orange)
+                            Text(a.title).font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                        }
+                        Text(a.content).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.horizontal, 12).padding(.bottom, 6)
+                }
+
                 if loading { ProgressView().padding(.vertical, 30) }
                 else if !err.isEmpty {
                     emptyState("wifi.exclamationmark", "加载失败", err)
@@ -89,6 +107,7 @@ struct CommunityScreen: View {
         err = ""
         do {
             posts = try await CommunityClient.shared.listPosts(category: category, keyword: keyword)
+            announcement = try? await CommunityClient.shared.latestAnnouncement()
         } catch {
             err = error.localizedDescription
         }
@@ -107,18 +126,14 @@ struct CommunityScreen: View {
     }
 }
 
-/// 帖子行（对应安卓帖子卡片：置顶徽标 + 分类 + 标题 + 摘要 + 作者/时间/赞/评）
+/// 帖子行（对应安卓帖子卡片：置顶徽标 + 分类 + 标题 + 摘要 + 作者/时间/赞/评 + 首图缩略）
 struct PostRow: View {
     let p: CommunityClient.Post
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                // 首字头像（表情字符或真图后续迭代）
-                ZStack {
-                    Circle().fill(Color.green.opacity(0.18)).frame(width: 34, height: 34)
-                    Text(p.avatarIsImage ? "🥾" : p.avatar).font(.headline)
-                }
+                AvatarView(src: p.avatar, size: 34)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(p.author.isEmpty ? "山友" : p.author).font(.subheadline.bold())
@@ -140,16 +155,25 @@ struct PostRow: View {
                     .lineLimit(1)
             }
             Text(p.title).font(.headline).lineLimit(2)
-            if !p.content.isEmpty {
-                Text(p.content).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !p.content.isEmpty {
+                        Text(p.content).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                    HStack(spacing: 14) {
+                        Label("\(p.likes)", systemImage: "hand.thumbsup")
+                        Label("\(p.comments)", systemImage: "text.bubble")
+                        if p.track > 0 { Label("轨迹", systemImage: "figure.hiking") }
+                        Spacer()
+                    }
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+                if let first = p.images.first {
+                    RemoteImg(src: first)
+                        .frame(width: 64, height: 64)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
             }
-            HStack(spacing: 14) {
-                Label("\(p.likes)", systemImage: "hand.thumbsup")
-                Label("\(p.comments)", systemImage: "text.bubble")
-                if p.track > 0 { Label("轨迹", systemImage: "figure.hiking") }
-                Spacer()
-            }
-            .font(.caption).foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)
     }
@@ -157,6 +181,7 @@ struct PostRow: View {
 
 /// 帖子详情（对应安卓 PostDetailActivity：正文 + 点赞 + 关注作者 + 评论列表 + 发评论）
 struct PostDetailView: View {
+    @EnvironmentObject var session: Session
     @State var post: CommunityClient.Post
     var onChanged: (() -> Void)?
 
@@ -167,6 +192,11 @@ struct PostDetailView: View {
     @State private var newComment = ""
     @State private var busy = false
     @State private var err = ""
+    @State private var viewerIdx: Int?
+    @State private var showSignup = false
+    @State private var showSignups = false
+    @State private var signedUp = false
+    @State private var askDeletePost = false
 
     var body: some View {
         List {
@@ -194,8 +224,7 @@ struct PostDetailView: View {
                     }
                     Text(post.content).font(.body)
                     if !post.images.isEmpty {
-                        Text("📷 \(post.images.count) 张图片（图片浏览后续迭代）")
-                            .font(.caption).foregroundStyle(.secondary)
+                        imageGrid
                     }
                     if post.track > 0 {
                         Label("关联轨迹：\(post.trackName.isEmpty ? "点击下载" : post.trackName) · \(TrackMath.fmtDistance(post.trackDistance)) · \(TrackMath.fmtDuration(post.trackDur))",
@@ -203,8 +232,7 @@ struct PostDetailView: View {
                             .font(.caption).foregroundStyle(.green)
                     }
                     if post.companion {
-                        Text("结伴同行 · 已报名 \(post.signups) 人（报名功能后续迭代）")
-                            .font(.caption).foregroundStyle(.blue)
+                        companionSection
                     }
                     if post.status == "pending" {
                         Text("⏳ 审核中，仅自己可见").font(.caption).foregroundStyle(.orange)
@@ -245,6 +273,14 @@ struct PostDetailView: View {
                         Text(c.text).font(.subheadline)
                     }
                     .padding(.vertical, 2)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        // 只能删自己的评论（与安卓 PostDetailActivity 一致）
+                        if Int64(session.uid) == c.uid || session.uid == String(c.uid) {
+                            Button(role: .destructive) {
+                                Task { await delComment(c) }
+                            } label: { Label("删除", systemImage: "trash") }
+                        }
+                    }
                 }
                 HStack {
                     TextField("友善评论，共赴山野", text: $newComment)
@@ -261,8 +297,93 @@ struct PostDetailView: View {
         }
         .navigationTitle("帖子")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // 删除自己的帖子（对应安卓 PostDetailActivity 删除入口）
+            if post.uid > 0, session.uid == String(post.uid) || Int(session.uid) == Int(post.uid) {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(role: .destructive) { askDeletePost = true } label: {
+                        Image(systemName: "trash")
+                    }
+                }
+            }
+        }
+        .fullScreenCover(item: $viewerIdx) { i in
+            ImageViewer(images: post.images, index: i.value)
+        }
+        .sheet(isPresented: $showSignup) {
+            SignupForm(post: post) { Task { await refresh() } }
+        }
+        .sheet(isPresented: $showSignups) {
+            SignupListView(pid: post.id)
+        }
+        .confirmationDialog("删除这条帖子？", isPresented: $askDeletePost, titleVisibility: .visible) {
+            Button("删除", role: .destructive) { Task { await delPost() } }
+            Button("取消", role: .cancel) {}
+        }
         .task { await refresh() }
     }
+
+    // MARK: - 图片九宫格（3 列，点击全屏浏览）
+
+    private var imageGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+            ForEach(Array(post.images.enumerated()), id: \.offset) { i, src in
+                Button { viewerIdx = ViewerIndex(i) } label: {
+                    RemoteImg(src: src)
+                        .frame(height: 104)
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// 全屏查看器定位（Int 包装，满足 Identifiable）
+    struct ViewerIndex: Identifiable { let value: Int; var id: Int { value } }
+
+    // MARK: - 结伴报名区
+
+    private var companionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("结伴同行 · 已报名 \(post.signups) 人", systemImage: "person.2.wave.2")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.blue)
+                Spacer()
+                Button("报名名单") { showSignups = true }
+                    .font(.caption)
+            }
+            if !post.needGender.isEmpty {
+                Text("限 \(post.needGender)报名").font(.caption2).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 10) {
+                Button {
+                    showSignup = true
+                } label: {
+                    Text(signedUp ? "修改报名" : "我要报名")
+                        .font(.subheadline.bold())
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                        .foregroundStyle(.blue)
+                }
+                if signedUp {
+                    Button {
+                        Task { await cancelMySignup() }
+                    } label: {
+                        Text("取消报名")
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(Color(.systemGray5), in: RoundedRectangle(cornerRadius: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 数据
 
     private func refresh() async {
         do {
@@ -280,9 +401,37 @@ struct PostDetailView: View {
             let l = try? await ls
             liked = l?.liked ?? false
             likeCount = l?.count ?? post.likes
+            // 我是否已报名（对照名单里的 uid）
+            if post.companion, let myUid = Int(session.uid) {
+                let my = (try? await CommunityClient.shared.listSignups(pid: post.id)) ?? []
+                signedUp = my.contains { Int($0.uid) == myUid }
+            }
         } catch {
             err = error.localizedDescription
         }
+    }
+
+    private func delComment(_ c: CommunityClient.Comment) async {
+        do {
+            try await CommunityClient.shared.deleteComment(c.id)
+            comments = try await CommunityClient.shared.listComments(pid: post.id)
+            post.comments = comments.count
+        } catch { err = error.localizedDescription }
+    }
+
+    private func delPost() async {
+        do {
+            try await CommunityClient.shared.deletePost(post.id)
+            onChanged?()
+        } catch { err = error.localizedDescription }
+    }
+
+    private func cancelMySignup() async {
+        do {
+            try await CommunityClient.shared.cancelSignup(pid: post.id)
+            signedUp = false
+            await refresh()
+        } catch { err = error.localizedDescription }
     }
 
     private func toggleLike() async {
@@ -316,7 +465,119 @@ struct PostDetailView: View {
     }
 }
 
-/// 发帖（对应安卓 CreatePostActivity：标题/内容/地点/分类）
+/// 报名表单（对应安卓 signup：性别/名字/手机号 + 帖子要求同城时填城市）
+struct SignupForm: View {
+    let post: CommunityClient.Post
+    var onDone: (() -> Void)?
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var gender = "男"
+    @State private var name = ""
+    @State private var phone = ""
+    @State private var city = ""
+    @State private var err = ""
+    @State private var busy = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("报名信息") {
+                    Picker("性别", selection: $gender) {
+                        ForEach(["男", "女"], id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    TextField("姓名/称呼", text: $name)
+                    TextField("手机号（仅楼主可见）", text: $phone)
+                        .keyboardType(.phonePad)
+                    if post.needCity {
+                        TextField("所在城市（本帖要求同城）", text: $city)
+                    }
+                }
+                if post.needGender == "男" || post.needGender == "女生" || post.needGender == "男生" {
+                    Text("本帖限 \(post.needGender)报名，请留意").font(.footnote).foregroundStyle(.orange)
+                }
+                Section {
+                    Button {
+                        Task { await submit() }
+                    } label: {
+                        if busy { ProgressView().frame(maxWidth: .infinity) }
+                        else { Text("提交报名").frame(maxWidth: .infinity).bold() }
+                    }
+                    .disabled(busy || name.trimmingCharacters(in: .whitespaces).isEmpty
+                              || phone.trimmingCharacters(in: .whitespaces).count < 5)
+                    if !err.isEmpty { Text(err).font(.footnote).foregroundStyle(.red) }
+                } footer: {
+                    Text("手机号仅楼主和管理员可见，其他人看到的是打码号码")
+                }
+            }
+            .navigationTitle("结伴报名")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+            }
+        }
+    }
+
+    private func submit() async {
+        busy = true; err = ""
+        do {
+            _ = try await CommunityClient.shared.signup(
+                pid: post.id, gender: gender,
+                name: name.trimmingCharacters(in: .whitespaces),
+                phone: phone.trimmingCharacters(in: .whitespaces),
+                city: city.trimmingCharacters(in: .whitespaces))
+            onDone?()
+            dismiss()
+        } catch {
+            err = error.localizedDescription
+        }
+        busy = false
+    }
+}
+
+/// 报名名单（对应安卓 listSignups）
+struct SignupListView: View {
+    let pid: Int64
+    @State private var items: [CommunityClient.Signup] = []
+    @State private var err = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if !err.isEmpty { Text(err).font(.footnote).foregroundStyle(.red) }
+                ForEach(items) { s in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(s.name).font(.subheadline.bold())
+                            Text(s.gender).font(.caption2)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(s.gender == "女" ? Color.pink.opacity(0.12) : Color.blue.opacity(0.12), in: Capsule())
+                                .foregroundStyle(s.gender == "女" ? .pink : .blue)
+                            Spacer()
+                            Text(TimeFmt.post(s.time)).font(.caption2).foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            Text(s.phone).font(.caption).foregroundStyle(.secondary)
+                            if !s.city.isEmpty { Text("· \(s.city)").font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                if items.isEmpty && err.isEmpty {
+                    Text("还没有人报名").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("报名名单")
+            .navigationBarTitleDisplayMode(.inline)
+            .task {
+                do { items = try await CommunityClient.shared.listSignups(pid: pid) }
+                catch { err = error.localizedDescription }
+            }
+        }
+    }
+}
+
+/// 发帖（对应安卓 CreatePostActivity：标题/内容/地点/分类 + 图片≤4张 + 结伴报名条件）
 struct CreatePostView: View {
     var onDone: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
@@ -325,6 +586,10 @@ struct CreatePostView: View {
     @State private var content = ""
     @State private var place = ""
     @State private var category = "综合"
+    @State private var picked: [UIImage] = []
+    @State private var showPicker = false
+    @State private var needCity = false
+    @State private var needGender = "不限"
     @State private var res: String?
     @State private var busy = false
 
@@ -352,6 +617,24 @@ struct CreatePostView: View {
                             }
                         }
                 }
+                Section("图片（最多 4 张）") {
+                    pickedImages
+                    if picked.count < 4 {
+                        Button {
+                            showPicker = true
+                        } label: {
+                            Label("从相册选择", systemImage: "photo.on.rectangle.angled")
+                        }
+                    }
+                }
+                if category == "结伴同行" {
+                    Section("报名条件") {
+                        Toggle("要求同城", isOn: $needCity)
+                        Picker("性别限制", selection: $needGender) {
+                            ForEach(["不限", "男生", "女生"], id: \.self) { Text($0).tag($0) }
+                        }
+                    }
+                }
                 Section {
                     Button {
                         Task { await submit() }
@@ -363,7 +646,9 @@ struct CreatePostView: View {
                               || content.trimmingCharacters(in: .whitespaces).isEmpty)
                     if let res { Text(res).font(.footnote).foregroundStyle(.orange) }
                 } footer: {
-                    Text("图片/视频/关联轨迹发帖功能后续迭代；结伴同行帖请先在正文写明集合时间地点")
+                    Text(category == "结伴同行"
+                         ? "结伴帖会展示报名入口，报名者手机号仅你可见"
+                         : "帖子提交后进入审核，通过后所有人可见")
                 }
             }
             .navigationTitle("发帖")
@@ -373,17 +658,59 @@ struct CreatePostView: View {
                     Button("取消") { dismiss() }
                 }
             }
+            .sheet(isPresented: $showPicker) {
+                MultiPhotoPicker(maxCount: 4 - picked.count) { imgs in
+                    picked.append(contentsOf: imgs.prefix(4 - picked.count))
+                }
+            }
+        }
+    }
+
+    private var pickedImages: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(picked.enumerated()), id: \.offset) { i, img in
+                    ZStack(alignment: .topTrailing) {
+                        Image(uiImage: img)
+                            .resizable().scaledToFill()
+                            .frame(width: 72, height: 72)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        Button {
+                            picked.remove(at: i)
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(.white, .red)
+                        }
+                        .offset(x: 6, y: -6)
+                    }
+                }
+                if picked.isEmpty {
+                    Text("未选择图片").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 2)
         }
     }
 
     private func submit() async {
         busy = true
         do {
+            // 压缩成 data URL（≤1.5MB，与安卓同规格）
+            var imgs: [String] = []
+            for img in picked {
+                if let s = ImageUploadKit.dataURL(img) { imgs.append(s) }
+            }
+            let companion = category == "结伴同行"
             let r = try await CommunityClient.shared.createPost(
                 title: title.trimmingCharacters(in: .whitespaces),
                 content: content.trimmingCharacters(in: .whitespaces),
                 place: place.trimmingCharacters(in: .whitespaces),
-                category: category)
+                category: category,
+                images: imgs,
+                companion: companion,
+                needCity: needCity,
+                needGender: needGender == "不限" ? "" : needGender)
             let status = r["status"] as? String ?? "approved"
             res = status == "approved" ? "发布成功！" : "已提交，等待人工审核"
             if status == "approved" {
@@ -395,5 +722,43 @@ struct CreatePostView: View {
             res = error.localizedDescription
         }
         busy = false
+    }
+}
+
+/// 多选照片（iOS 16 PhotosPicker 包装：返回 UIImage 数组）
+struct MultiPhotoPicker: View {
+    let maxCount: Int
+    var onPicked: ([UIImage]) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var items: [PhotosPickerItem] = []
+
+    var body: some View {
+        NavigationStack {
+            PhotosPicker(selection: $items, maxSelectionCount: max(1, maxCount), matching: .images) {
+                Label("打开相册选择", systemImage: "photo.badge.plus")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+            }
+            .padding()
+            .navigationTitle("选择照片")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("完成") { dismiss() } }
+            }
+            .onChange(of: items) { newItems in
+                Task {
+                    var imgs: [UIImage] = []
+                    for it in newItems.prefix(max(1, maxCount)) {
+                        if let d = try? await it.loadTransferable(type: Data.self),
+                           let ui = UIImage(data: d) {
+                            imgs.append(ui)
+                        }
+                    }
+                    if !imgs.isEmpty { onPicked(imgs) }
+                    dismiss()
+                }
+            }
+            Text("最多还可选 \(max(0, maxCount)) 张").font(.footnote).foregroundStyle(.secondary)
+        }
     }
 }

@@ -41,17 +41,21 @@ struct HomeScreen: View {
             Task { await loadAll() }
         }
         .onReceive(loc.$tick) { _ in refreshLocal() }
+        // 未读角标 15 秒轮询（对应安卓 MainActivity.fetchUnread 的全局定时刷新）
+        .onReceive(Timer.publish(every: 15, on: .main, in: .common).autoconnect()) { _ in
+            guard session.loggedIn else { return }
+            Task {
+                await loadDmUnread()
+                await loadNotifyUnread()
+            }
+        }
     }
 
     // MARK: - 头部
 
     private var header: some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(Color(red: 0.28, green: 0.62, blue: 0.36).opacity(0.15))
-                .frame(width: 42, height: 42)
-                .overlay(Text(String(session.name.prefix(1)).isEmpty ? "徒" : String(session.name.prefix(1)))
-                    .font(.headline).foregroundStyle(Color(red: 0.28, green: 0.62, blue: 0.36)))
+            AvatarView(src: session.avatar, size: 42)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.name.isEmpty ? "徒步者" : session.name)
                     .font(.subheadline.weight(.semibold))
@@ -224,11 +228,7 @@ struct HomeScreen: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 6) {
-                                Text(String(p.author.prefix(1)))
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.white)
-                                    .frame(width: 20, height: 20)
-                                    .background(Color.orange.opacity(0.8), in: Circle())
+                                AvatarView(src: p.avatar, size: 20)
                                 Text(p.author).font(.caption).foregroundStyle(.secondary)
                                 Spacer()
                                 Text(TimeFmt.post(p.time)).font(.caption2).foregroundStyle(.secondary)

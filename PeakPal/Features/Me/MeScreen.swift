@@ -8,6 +8,9 @@ struct MeScreen: View {
     @State private var updateInfo: UpdateChecker.Info?
     @State private var showUpdate = false
     @State private var upToDate = false
+    @State private var supportUid = 0
+    @State private var supportNick = "官方客服"
+    @State private var supportErr = ""
 
     /// 手动检查更新：有新版弹更新框；已最新/无网络给行内提示
     private func checkUpdate() {
@@ -32,11 +35,40 @@ struct MeScreen: View {
             List {
                 Section("账号") {
                     HStack {
-                        Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 44)).foregroundStyle(.green)
+                        AvatarView(src: session.avatar, size: 44)
                         VStack(alignment: .leading) {
                             Text(session.name.isEmpty ? session.uid : session.name).font(.headline)
                             Text("UID: \(session.uid)").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Section("社区") {
+                    NavigationLink { ProfileEditScreen() } label: {
+                        Label("编辑资料", systemImage: "person.crop.rectangle")
+                    }
+                    NavigationLink { MyPostsScreen() } label: {
+                        Label("我的帖子", systemImage: "doc.text")
+                    }
+                    NavigationLink { FollowListScreen() } label: {
+                        Label("关注与粉丝", systemImage: "person.2")
+                    }
+                    NavigationLink {
+                        if supportUid > 0 {
+                            ChatScreen(peer: ConversationsScreen.Conv(
+                                uid: supportUid, username: "", nickname: supportNick,
+                                lastText: "", lastKind: "text", lastCreated: 0, unread: 0))
+                        }
+                    } label: {
+                        Label("联系客服", systemImage: "headphones")
+                    }
+                    .disabled(supportUid == 0)
+                    .onAppear {
+                        guard supportUid == 0 else { return }
+                        Task {
+                            do {
+                                let s = try await CommunityClient.shared.supportAccount()
+                                await MainActor.run { supportUid = s.uid; supportNick = s.nickname }
+                            } catch { supportErr = error.localizedDescription }
                         }
                     }
                 }
@@ -71,6 +103,7 @@ struct MeScreen: View {
                 }
             }
             .navigationTitle("我的")
+            .task { await session.syncProfile() }
             .alert("发现新版本 \(updateInfo?.version ?? "")（build \(updateInfo?.code ?? 0)）",
                    isPresented: $showUpdate, presenting: updateInfo) { info in
                 Button("复制下载链接") { _ = UpdateChecker.copyLink(info.url) }
